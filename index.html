@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Void Frontier</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="/styles/main.css" />
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+
+  <div id="hud-root">
+    <!-- Top-left: ship status cluster -->
+    <div class="panel status-panel">
+      <div class="stat-row">
+        <span class="stat-label">HULL</span>
+        <div class="bar-track"><div id="hull-bar" class="bar-fill hull-fill"></div></div>
+        <span id="hull-text" class="stat-value">-- / --</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">SHIELD</span>
+        <div class="bar-track"><div id="shield-bar" class="bar-fill shield-fill"></div></div>
+        <span id="shield-text" class="stat-value">-- / --</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">ENERGY</span>
+        <div class="bar-track"><div id="energy-bar" class="bar-fill energy-fill"></div></div>
+        <span id="energy-text" class="stat-value">-- / --</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">CARGO</span>
+        <div class="bar-track"><div id="cargo-bar" class="bar-fill cargo-fill"></div></div>
+        <span id="cargo-text" class="stat-value">-- / --</span>
+      </div>
+    </div>
+
+    <!-- Top-right: minimap -->
+    <div class="panel minimap-panel">
+      <canvas id="minimap" width="160" height="160"></canvas>
+    </div>
+
+    <!-- Bottom-left: module status strip -->
+    <div class="panel module-panel">
+      <div class="panel-title">SHIP CONFIGURATION</div>
+      <div id="module-list"></div>
+    </div>
+
+    <!-- Bottom-right: session stats -->
+    <div class="panel session-panel">
+      <div class="panel-title">SESSION</div>
+      <div class="stat-row"><span class="stat-label">Kills</span><span id="stat-kills" class="stat-value">0</span></div>
+      <div class="stat-row"><span class="stat-label">Resources</span><span id="stat-resources" class="stat-value">0</span></div>
+      <div class="stat-row"><span class="stat-label">Speed</span><span id="stat-speed" class="stat-value">0 u/s</span></div>
+    </div>
+
+    <div id="mining-hint" class="mining-hint">EXTRACTING…</div>
+
+    <div id="respawn-overlay" class="respawn-overlay">
+      <div class="respawn-box">
+        <div class="respawn-title">HULL INTEGRITY LOST</div>
+        <div class="respawn-sub">Rebuilding in <span id="respawn-timer">3.0</span>s</div>
+      </div>
+    </div>
+
+    <div class="controls-hint">
+      <strong>Mouse</strong> steer &amp; thrust toward cursor &middot;
+      <strong>Left Click</strong> fire &middot;
+      <strong>E</strong> mine nearest asteroid
+    </div>
+  </div>
+
+  <script type="module" src="/dist/main.js"></script>
+</body>
+</html>

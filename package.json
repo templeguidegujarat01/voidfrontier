@@ -1,0 +1,16 @@
+{
+  "name": "voidfrontier",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Void Frontier — original browser-based modular-ship space game.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
+    "serve": "node tools/serve.mjs",
+    "dev": "node tools/serve.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
