@@ -41,12 +41,19 @@ export class GameLoop {
     this.lastTime = now;
     this.accumulator += frameTime;
 
-    while (this.accumulator >= this.stepMs) {
-      this.update(this.stepMs / 1000);
-      this.accumulator -= this.stepMs;
+    try {
+      while (this.accumulator >= this.stepMs) {
+        this.update(this.stepMs / 1000);
+        this.accumulator -= this.stepMs;
+      }
+      this.render(this.accumulator / this.stepMs);
+    } catch (err) {
+      // A single bad frame should never permanently freeze the game with no
+      // feedback — log it and keep the loop alive rather than letting an
+      // uncaught exception silently stop requestAnimationFrame forever.
+      console.error('Void Frontier: error during game loop frame, continuing:', err);
     }
 
-    this.render(this.accumulator / this.stepMs);
     this.rafHandle = requestAnimationFrame(this.frame);
   };
 }

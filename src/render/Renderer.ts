@@ -1,8 +1,18 @@
 import { Camera } from '../core/Camera.js';
 import { World } from '../world/World.js';
-import { Ship } from '../entities/Ship.js';
-import { Projectile } from '../entities/Projectile.js';
 import { Vector2 } from '../core/Vector2.js';
+import { Projectile } from '../entities/Projectile.js';
+
+/** Structural shape Renderer.drawShip actually needs — satisfied by both Ship and RemotePlayer without requiring inheritance. */
+export interface Drawable {
+  alive: boolean;
+  position: Vector2;
+  angle: number;
+  faction: string;
+  name: string;
+  shield: number;
+  recentlyHit(nowMs: number): boolean;
+}
 
 const PALETTE = {
   bg: '#0b0e19',
@@ -17,6 +27,8 @@ const PALETTE = {
   playerAccent: '#e8fffb',
   botHull: '#ffb059',
   botAccent: '#fff3e6',
+  remoteHull: '#a78bfa',
+  remoteAccent: '#f3eaff',
   shield: 'rgba(94, 234, 212, 0.28)',
   shieldRim: 'rgba(94, 234, 212, 0.65)',
   projectilePlayer: '#8af7e4',
@@ -138,12 +150,12 @@ export class Renderer {
     }
   }
 
-  drawShip(camera: Camera, ship: Ship, nowMs: number): void {
+  drawShip(camera: Camera, ship: Drawable, nowMs: number): void {
     if (!ship.alive) return;
     const ctx = this.ctx;
     const screen = camera.worldToScreen(ship.position);
-    const hullColor = ship.faction === 'player' ? PALETTE.playerHull : PALETTE.botHull;
-    const accentColor = ship.faction === 'player' ? PALETTE.playerAccent : PALETTE.botAccent;
+    const hullColor = ship.faction === 'player' ? PALETTE.playerHull : ship.faction === 'remote' ? PALETTE.remoteHull : PALETTE.botHull;
+    const accentColor = ship.faction === 'player' ? PALETTE.playerAccent : ship.faction === 'remote' ? PALETTE.remoteAccent : PALETTE.botAccent;
 
     ctx.save();
     ctx.translate(screen.x, screen.y);

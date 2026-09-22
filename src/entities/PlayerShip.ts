@@ -7,7 +7,7 @@ import { Camera } from '../core/Camera.js';
 const STEER_DEADZONE = 18;
 
 export class PlayerShip extends Ship {
-  kills = 0;
+  deaths = 0;
   resourcesCollected = 0;
 
   constructor(cfg: ShipConfig) {

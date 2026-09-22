@@ -2,7 +2,7 @@ import { Vector2, clamp, angleDiff } from '../core/Vector2.js';
 import { ShipLoadout } from '../ship/ModuleTypes.js';
 import { computeShipStats, ShipStats } from '../ship/ShipStats.js';
 
-export type Faction = 'player' | 'bot';
+export type Faction = 'player' | 'bot' | 'remote';
 
 export interface ShipConfig {
   faction: Faction;
@@ -37,6 +37,7 @@ export abstract class Ship {
 
   alive = true;
   respawnTimer = 0;
+  kills = 0;
 
   /** -1..1, how hard to thrust forward this tick (set by controller). */
   thrustIntent = 0;

@@ -1,7 +1,10 @@
 import { PlayerShip } from '../entities/PlayerShip.js';
 import { Ship } from '../entities/Ship.js';
+import { RemotePlayer } from '../entities/RemotePlayer.js';
 import { World } from '../world/World.js';
 import { Asteroid } from '../world/Asteroid.js';
+import { ShipLoadout } from '../ship/ModuleTypes.js';
+import { getModule } from '../ship/ModuleCatalog.js';
 
 interface HudElements {
   hullBar: HTMLElement;
@@ -20,17 +23,32 @@ interface HudElements {
   respawnTimer: HTMLElement;
   miningHint: HTMLElement;
   minimapCanvas: HTMLCanvasElement;
+  matchInfo: HTMLElement;
+  netStatus: HTMLElement;
 }
+
+const CATEGORY_LABELS: [keyof ShipLoadout, string][] = [
+  ['coreFrameId', 'Core Frame'],
+  ['driveId', 'Drive'],
+  ['emitterId', 'Emitter'],
+  ['wardplateId', 'Wardplate'],
+  ['hullweaveId', 'Hullweave'],
+  ['reactorId', 'Reactor'],
+  ['holdId', 'Hold'],
+  ['drillId', 'Drill'],
+  ['arrayId', 'Array'],
+  ['utilityRigId', 'Utility Rig']
+];
 
 export class HUD {
   private el: HudElements;
   private minimapCtx: CanvasRenderingContext2D;
 
-  constructor() {
+  constructor(root: HTMLElement) {
     const req = <T extends HTMLElement>(id: string) => {
-      const found = document.getElementById(id);
+      const found = root.querySelector<T>(`#${id}`);
       if (!found) throw new Error(`Missing HUD element #${id}`);
-      return found as T;
+      return found;
     };
     this.el = {
       hullBar: req('hull-bar'),
@@ -48,36 +66,34 @@ export class HUD {
       respawnOverlay: req('respawn-overlay'),
       respawnTimer: req('respawn-timer'),
       miningHint: req('mining-hint'),
-      minimapCanvas: req<HTMLCanvasElement>('minimap')
+      minimapCanvas: req<HTMLCanvasElement>('minimap'),
+      matchInfo: req('match-info'),
+      netStatus: req('net-status')
     };
     const ctx = this.el.minimapCanvas.getContext('2d');
     if (!ctx) throw new Error('Minimap canvas unsupported');
     this.minimapCtx = ctx;
-    this.renderModuleList();
   }
 
-  private renderModuleList(): void {
-    // Static for this build (loadout fixed at spawn) — the list still
-    // demonstrates that ship stats are module-driven, per the ship-status
-    // requirement; a swappable Builder UI is a later phase.
-    const rows = [
-      ['Core Frame', 'Wren-Class'],
-      ['Drive', 'Skiff Drive'],
-      ['Emitter', 'Pulse Emitter'],
-      ['Wardplate', 'Veil Wardplate'],
-      ['Hullweave', 'Plate Hullweave'],
-      ['Reactor', 'Ember Reactor'],
-      ['Hold', 'Satchel Hold'],
-      ['Drill', 'Pick Drill'],
-      ['Array', 'Wide Array'],
-      ['Utility Rig', 'Mender Rig']
-    ];
-    this.el.moduleList.innerHTML = rows
-      .map(([cat, name]) => `<div class="module-row"><span class="module-cat">${cat}</span><span class="module-name">${name}</span></div>`)
-      .join('');
+  /** Renders the module list from the ship's *actual* equipped loadout (not a fixed placeholder). */
+  setLoadout(loadout: ShipLoadout): void {
+    const rows = CATEGORY_LABELS.map(([key, label]) => {
+      const mod = getModule(loadout[key]);
+      return `<div class="module-row"><span class="module-cat">${label}</span><span class="module-name">${mod.name}</span></div>`;
+    });
+    this.el.moduleList.innerHTML = rows.join('');
   }
 
-  update(player: PlayerShip, world: World, asteroids: Asteroid[], bots: Ship[]): void {
+  setMatchInfo(text: string): void {
+    this.el.matchInfo.textContent = text;
+    this.el.matchInfo.style.display = text ? 'block' : 'none';
+  }
+
+  setNetStatus(text: string): void {
+    this.el.netStatus.textContent = text;
+  }
+
+  update(player: PlayerShip, world: World, asteroids: Asteroid[], bots: Ship[], remotePlayers: RemotePlayer[] = []): void {
     const s = player.stats;
     this.setBar(this.el.hullBar, player.hull, s.maxHull);
     this.el.hullText.textContent = `${Math.ceil(player.hull)} / ${Math.round(s.maxHull)}`;
@@ -102,7 +118,7 @@ export class HUD {
 
     this.el.miningHint.style.display = player.mining && player.alive ? 'block' : 'none';
 
-    this.drawMinimap(player, world, asteroids, bots);
+    this.drawMinimap(player, world, asteroids, bots, remotePlayers);
   }
 
   private setBar(el: HTMLElement, value: number, max: number): void {
@@ -110,7 +126,7 @@ export class HUD {
     el.style.width = `${pct}%`;
   }
 
-  private drawMinimap(player: Ship, world: World, asteroids: Asteroid[], bots: Ship[]): void {
+  private drawMinimap(player: Ship, world: World, asteroids: Asteroid[], bots: Ship[], remotePlayers: RemotePlayer[]): void {
     const ctx = this.minimapCtx;
     const size = this.el.minimapCanvas.width;
     ctx.clearRect(0, 0, size, size);
@@ -133,6 +149,15 @@ export class HUD {
     for (const b of bots) {
       if (!b.alive) continue;
       const p = toMini(b.position.x, b.position.y);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = '#a78bfa';
+    for (const r of remotePlayers) {
+      if (!r.alive) continue;
+      const p = toMini(r.position.x, r.position.y);
       ctx.beginPath();
       ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
       ctx.fill();
