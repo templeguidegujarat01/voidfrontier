@@ -14,6 +14,7 @@ export class Ship {
         this.cargo = 0;
         this.alive = true;
         this.respawnTimer = 0;
+        this.kills = 0;
         /** -1..1, how hard to thrust forward this tick (set by controller). */
         this.thrustIntent = 0;
         /** Desired facing angle this tick (set by controller). */

@@ -4,7 +4,7 @@ const STEER_DEADZONE = 18;
 export class PlayerShip extends Ship {
     constructor(cfg) {
         super(cfg);
-        this.kills = 0;
+        this.deaths = 0;
         this.resourcesCollected = 0;
     }
     /** Reads raw input each tick and converts it into thrust/steer/fire intent. */

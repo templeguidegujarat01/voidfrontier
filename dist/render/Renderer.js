@@ -12,6 +12,8 @@ const PALETTE = {
     playerAccent: '#e8fffb',
     botHull: '#ffb059',
     botAccent: '#fff3e6',
+    remoteHull: '#a78bfa',
+    remoteAccent: '#f3eaff',
     shield: 'rgba(94, 234, 212, 0.28)',
     shieldRim: 'rgba(94, 234, 212, 0.65)',
     projectilePlayer: '#8af7e4',
@@ -126,8 +128,8 @@ export class Renderer {
             return;
         const ctx = this.ctx;
         const screen = camera.worldToScreen(ship.position);
-        const hullColor = ship.faction === 'player' ? PALETTE.playerHull : PALETTE.botHull;
-        const accentColor = ship.faction === 'player' ? PALETTE.playerAccent : PALETTE.botAccent;
+        const hullColor = ship.faction === 'player' ? PALETTE.playerHull : ship.faction === 'remote' ? PALETTE.remoteHull : PALETTE.botHull;
+        const accentColor = ship.faction === 'player' ? PALETTE.playerAccent : ship.faction === 'remote' ? PALETTE.remoteAccent : PALETTE.botAccent;
         ctx.save();
         ctx.translate(screen.x, screen.y);
         ctx.rotate(ship.angle);

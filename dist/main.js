@@ -1,14 +1,51 @@
-import { Game } from './game/Game.js';
+import { AppShell } from './app/AppShell.js';
+import { MainMenuScreen } from './screens/MainMenuScreen.js';
+import { LobbyScreen } from './screens/LobbyScreen.js';
+import { BuilderScreen } from './screens/BuilderScreen.js';
+import { GameScreen } from './screens/GameScreen.js';
+import { ResultsScreen } from './screens/ResultsScreen.js';
 function boot() {
-    const canvas = document.getElementById('game-canvas');
-    if (!canvas) {
-        console.error('Void Frontier: #game-canvas not found in DOM.');
+    const root = document.getElementById('app-root');
+    if (!root) {
+        console.error('Void Frontier: #app-root not found in DOM.');
         return;
     }
-    const game = new Game(canvas);
-    game.start();
-    // Exposed for debugging/QA only (not part of the game's runtime logic).
-    window.__voidfrontier = game;
+    const app = new AppShell(root);
+    const showMenu = () => {
+        app.show(new MainMenuScreen({
+            onOpenBuilder: () => showBuilder(showMenu),
+            onPlay: (modeId, server) => showLobby(modeId, server)
+        }));
+    };
+    const showBuilder = (onBack) => {
+        app.show(new BuilderScreen({ onBack }));
+    };
+    const showLobby = (modeId, server) => {
+        app.show(new LobbyScreen({
+            modeId,
+            serverName: server?.name ?? null,
+            serverWsUrl: server?.wsUrl,
+            serverHttpUrl: server?.httpUrl,
+            onBack: showMenu,
+            onOpenBuilder: () => showBuilder(() => showLobby(modeId, server)),
+            onStart: (config) => showGame(config)
+        }));
+    };
+    const showGame = (config) => {
+        app.show(new GameScreen({
+            config,
+            onQuit: showMenu,
+            onMatchEnd: (result) => showResults(config, result)
+        }));
+    };
+    const showResults = (config, result) => {
+        app.show(new ResultsScreen({
+            result,
+            onMainMenu: showMenu,
+            onPlayAgain: () => showGame(config)
+        }));
+    };
+    showMenu();
 }
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot);

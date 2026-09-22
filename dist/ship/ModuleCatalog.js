@@ -5,15 +5,80 @@ import { ModuleCategory } from './ModuleTypes.js';
  * scattered constants) when adding new tiers or categories later.
  */
 export const MODULE_CATALOG = [
-    // --- Core Frames --------------------------------------------------
+    // --- Core Frames (ship chassis/classes) -----------------------------
+    // Eight original chassis, each with a genuinely different stat lean —
+    // not just "bigger number" tiers. Renders in the Builder as the
+    // player's first, most identity-defining choice.
+    {
+        id: 'core.scout',
+        name: 'Scout-Class Frame',
+        category: ModuleCategory.CoreFrame,
+        tier: 1,
+        description: 'Very light frame built for reconnaissance. Sharp turns, long detection range, thin hull.',
+        mass: 28,
+        hullBonus: 45,
+        turnRateBonus: 0.3,
+        radarRange: 300
+    },
+    {
+        id: 'core.striker',
+        name: 'Striker-Class Frame',
+        category: ModuleCategory.CoreFrame,
+        tier: 1,
+        description: 'Light hit-and-run frame. Raw top-speed lean over durability.',
+        mass: 35,
+        hullBonus: 55,
+        topSpeedBonus: 40
+    },
+    {
+        id: 'core.interceptor',
+        name: 'Interceptor-Class Frame',
+        category: ModuleCategory.CoreFrame,
+        tier: 2,
+        description: 'Built to run down fleeing targets — strong turn rate and acceleration lean.',
+        mass: 45,
+        hullBonus: 65,
+        turnRateBonus: 0.35,
+        topSpeedBonus: 25
+    },
+    {
+        id: 'core.miner',
+        name: 'Miner-Class Frame',
+        category: ModuleCategory.CoreFrame,
+        tier: 2,
+        description: 'Extraction-focused frame with reinforced holds and drill mounts baked in.',
+        mass: 55,
+        hullBonus: 70,
+        cargoCapacity: 40,
+        miningRatePerSec: 3
+    },
     {
         id: 'core.wren',
         name: 'Wren-Class Frame',
         category: ModuleCategory.CoreFrame,
         tier: 1,
-        description: 'Light, nimble hull. Small mass budget, tight turn radius.',
+        description: 'Balanced light generalist frame — the default starting chassis.',
         mass: 40,
         hullBonus: 60
+    },
+    {
+        id: 'core.defender',
+        name: 'Defender-Class Frame',
+        category: ModuleCategory.CoreFrame,
+        tier: 2,
+        description: 'Mid-heavy frame with a large baseline hull pool. Built to hold a line.',
+        mass: 75,
+        hullBonus: 130
+    },
+    {
+        id: 'core.support',
+        name: 'Support-Class Frame',
+        category: ModuleCategory.CoreFrame,
+        tier: 2,
+        description: 'Carries extra energy buffer for sustained shield/repair uptime.',
+        mass: 50,
+        hullBonus: 70,
+        energyCapacity: 25
     },
     {
         id: 'core.harrow',
@@ -23,6 +88,15 @@ export const MODULE_CATALOG = [
         description: 'Balanced mid-size hull with room for heavier modules.',
         mass: 70,
         hullBonus: 110
+    },
+    {
+        id: 'core.heavy',
+        name: 'Heavy-Class Frame',
+        category: ModuleCategory.CoreFrame,
+        tier: 3,
+        description: 'Maximum hull pool, maximum mass. Slow, and hard to put down.',
+        mass: 110,
+        hullBonus: 180
     },
     // --- Drives (engines) ----------------------------------------------
     {
@@ -199,15 +273,59 @@ export const MODULE_CATALOG = [
         radarRange: 1400
     },
     // --- Utility Rigs -------------------------------------------------------
+    // Utility Rigs are where mobility/defensive/offensive/support flavor
+    // lives in this pass (rather than adding four brand-new slot categories,
+    // which would be a bigger architecture change) — each rig leans into a
+    // different one of those roles via a real stat effect.
     {
         id: 'utility.mender',
         name: 'Mender Rig',
         category: ModuleCategory.UtilityRig,
         tier: 1,
-        description: 'Slow passive hull self-repair.',
+        description: 'Support: slow passive hull self-repair.',
         mass: 9,
         repairPerSec: 1.5,
         utilityEnergyCostPerSec: 2
+    },
+    {
+        id: 'utility.booster',
+        name: 'Booster Rig',
+        category: ModuleCategory.UtilityRig,
+        tier: 2,
+        description: 'Mobility: raises top speed at a steady energy cost.',
+        mass: 10,
+        topSpeedBonus: 35,
+        utilityEnergyCostPerSec: 3
+    },
+    {
+        id: 'utility.aegis',
+        name: 'Aegis Rig',
+        category: ModuleCategory.UtilityRig,
+        tier: 2,
+        description: 'Defensive: adds extra shield buffer and regen on top of your Wardplate.',
+        mass: 12,
+        shieldCapacity: 20,
+        shieldRegenPerSec: 1.5,
+        utilityEnergyCostPerSec: 2
+    },
+    {
+        id: 'utility.vanguard',
+        name: 'Vanguard Rig',
+        category: ModuleCategory.UtilityRig,
+        tier: 2,
+        description: 'Offensive: adds flat bonus damage to your equipped Emitter.',
+        mass: 12,
+        weaponDamage: 5,
+        utilityEnergyCostPerSec: 2
+    },
+    {
+        id: 'utility.cache',
+        name: 'Cache Rig',
+        category: ModuleCategory.UtilityRig,
+        tier: 1,
+        description: 'Support: extra cargo capacity for longer extraction runs.',
+        mass: 8,
+        cargoCapacity: 25
     },
     {
         id: 'utility.none',
