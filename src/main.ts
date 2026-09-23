@@ -1,7 +1,7 @@
 import { AppShell } from './app/AppShell.js';
 import { MainMenuScreen } from './screens/MainMenuScreen.js';
 import { LobbyScreen } from './screens/LobbyScreen.js';
-import { BuilderScreen } from './screens/BuilderScreen.js';
+import { ShipyardScreen } from './screens/ShipyardScreen.js';
 import { GameScreen } from './screens/GameScreen.js';
 import { ResultsScreen } from './screens/ResultsScreen.js';
 import { GameModeId, MatchConfig, MatchResult } from './app/MatchConfig.js';
@@ -23,14 +23,14 @@ function boot(): void {
   const showMenu = () => {
     app.show(
       new MainMenuScreen({
-        onOpenBuilder: () => showBuilder(showMenu),
+        onOpenShipyard: () => showShipyard(),
         onPlay: (modeId: GameModeId, server: ServerSelection | null) => showLobby(modeId, server)
       })
     );
   };
 
-  const showBuilder = (onBack: () => void) => {
-    app.show(new BuilderScreen({ onBack }));
+  const showShipyard = () => {
+    app.show(new ShipyardScreen({ onBack: showMenu }));
   };
 
   const showLobby = (modeId: GameModeId, server: ServerSelection | null) => {
@@ -41,7 +41,6 @@ function boot(): void {
         serverWsUrl: server?.wsUrl,
         serverHttpUrl: server?.httpUrl,
         onBack: showMenu,
-        onOpenBuilder: () => showBuilder(() => showLobby(modeId, server)),
         onStart: (config: MatchConfig) => showGame(config)
       })
     );

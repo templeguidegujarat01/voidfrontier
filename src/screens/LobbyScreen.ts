@@ -1,6 +1,7 @@
 import { Screen } from '../app/Screen.js';
 import { GameModeId, MatchConfig } from '../app/MatchConfig.js';
-import { LoadoutStore, SavedLoadout } from '../loadouts/LoadoutStore.js';
+import { TIER1_TEMPLATES } from '../ship/StarterBlueprints.js';
+import { computeAggregateStats, instantiateBlueprint } from '../ship/ShipBlueprint.js';
 
 const NAME_KEY = 'voidfrontier.playerName';
 
@@ -11,7 +12,6 @@ export interface LobbyOptions {
   serverHttpUrl?: string;
   onStart: (config: MatchConfig) => void;
   onBack: () => void;
-  onOpenBuilder: () => void;
 }
 
 const MODE_LABELS: Record<GameModeId, string> = {
@@ -21,21 +21,16 @@ const MODE_LABELS: Record<GameModeId, string> = {
 };
 
 export class LobbyScreen implements Screen {
-  private loadoutStore = new LoadoutStore();
   private root: HTMLElement | null = null;
   private botCount = this.opts.modeId === 'frontier-ffa' ? 6 : 4;
-  private selectedLoadoutId: string;
+  private selectedTemplateId = TIER1_TEMPLATES[0].id;
   private countdownTimer: number | null = null;
 
-  constructor(private readonly opts: LobbyOptions) {
-    const loadouts = this.loadoutStore.list();
-    this.selectedLoadoutId = loadouts[0]?.id ?? '';
-  }
+  constructor(private readonly opts: LobbyOptions) {}
 
   mount(root: HTMLElement): void {
     this.root = root;
     const name = localStorage.getItem(NAME_KEY) || 'Pilot';
-    const loadouts = this.loadoutStore.list();
     const showBots = this.opts.modeId !== 'local-dev-multiplayer';
     const showKillTarget = this.opts.modeId === 'frontier-ffa';
 
@@ -51,11 +46,8 @@ export class LobbyScreen implements Screen {
           ${showKillTarget ? '<div class="lobby-row"><span>Win Condition</span><strong>First to 10 kills, or 5:00 clock</strong></div>' : ''}
 
           <div class="lobby-field">
-            <label class="field-label">SHIP LOADOUT</label>
-            <select id="loadout-select" class="text-input">
-              ${loadouts.map((l) => `<option value="${l.id}" ${l.id === this.selectedLoadoutId ? 'selected' : ''}>${escapeHtml(l.name)}</option>`).join('')}
-            </select>
-            <button id="edit-loadout" class="menu-btn small">Edit in Builder</button>
+            <label class="field-label">STARTER SHIP (TIER 1)</label>
+            <div id="starter-choices" class="starter-choices"></div>
           </div>
 
           ${
@@ -82,10 +74,8 @@ export class LobbyScreen implements Screen {
       </div>
     `;
 
-    root.querySelector('#loadout-select')?.addEventListener('change', (e) => {
-      this.selectedLoadoutId = (e.target as HTMLSelectElement).value;
-    });
-    root.querySelector('#edit-loadout')?.addEventListener('click', () => this.opts.onOpenBuilder());
+    this.renderStarterChoices();
+
     root.querySelector('#bot-count')?.addEventListener('input', (e) => {
       this.botCount = Number((e.target as HTMLInputElement).value);
       const label = root.querySelector('#bot-count-label');
@@ -93,6 +83,32 @@ export class LobbyScreen implements Screen {
     });
     root.querySelector('#lobby-back')?.addEventListener('click', () => this.opts.onBack());
     root.querySelector('#lobby-ready')?.addEventListener('click', () => this.beginCountdown());
+  }
+
+  private renderStarterChoices(): void {
+    const container = this.root?.querySelector('#starter-choices');
+    if (!container) return;
+    container.innerHTML = TIER1_TEMPLATES.map((t) => {
+      const stats = computeAggregateStats(instantiateBlueprint(t.blocks));
+      const selected = t.id === this.selectedTemplateId;
+      return `
+        <button class="starter-card ${selected ? 'starter-card-selected' : ''}" data-template="${t.id}">
+          <div class="starter-card-name">${t.name}</div>
+          <div class="starter-card-desc">${t.description}</div>
+          <div class="starter-card-stats">
+            <span>${stats.blockCount} blocks</span>
+            <span>${stats.weaponMounts.length} weapons</span>
+            <span>${stats.miningRatePerSec.toFixed(0)} mine/s</span>
+          </div>
+        </button>`;
+    }).join('');
+
+    container.querySelectorAll<HTMLElement>('.starter-card').forEach((card) => {
+      card.addEventListener('click', () => {
+        this.selectedTemplateId = card.dataset.template!;
+        this.renderStarterChoices();
+      });
+    });
   }
 
   private beginCountdown(): void {
@@ -117,13 +133,10 @@ export class LobbyScreen implements Screen {
 
   private launch(): void {
     const name = localStorage.getItem(NAME_KEY) || 'Pilot';
-    const saved: SavedLoadout | undefined = this.loadoutStore.get(this.selectedLoadoutId);
-    const loadout = saved?.loadout ?? this.loadoutStore.list()[0].loadout;
-
     const config: MatchConfig = {
       modeId: this.opts.modeId,
       playerName: name,
-      loadout,
+      starterBlueprintId: this.selectedTemplateId,
       botCount: this.opts.modeId === 'local-dev-multiplayer' ? 3 : this.botCount,
       killTarget: this.opts.modeId === 'frontier-ffa' ? 10 : null,
       timeLimitSec: this.opts.modeId === 'frontier-ffa' ? 300 : null,

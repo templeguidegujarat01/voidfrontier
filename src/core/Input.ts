@@ -7,6 +7,7 @@ import { Vector2 } from './Vector2.js';
 export class Input {
   readonly mouseScreen = new Vector2(0, 0);
   mouseDown = false;
+  rightMouseDown = false;
   private keys = new Set<string>();
   private justPressed = new Set<string>();
 
@@ -18,9 +19,11 @@ export class Input {
     });
     target.addEventListener('mousedown', (e) => {
       if (e.button === 0) this.mouseDown = true;
+      if (e.button === 2) this.rightMouseDown = true;
     });
     window.addEventListener('mouseup', (e) => {
       if (e.button === 0) this.mouseDown = false;
+      if (e.button === 2) this.rightMouseDown = false;
     });
     window.addEventListener('keydown', (e) => {
       const key = e.key.toLowerCase();

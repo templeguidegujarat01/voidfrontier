@@ -1,22 +1,34 @@
 import { Vector2, clamp, angleDiff } from '../core/Vector2.js';
-import { ShipLoadout } from '../ship/ModuleTypes.js';
-import { computeShipStats, ShipStats } from '../ship/ShipStats.js';
+import { PlacedBlock, ShipBlueprint, GRID_CELL_SIZE } from '../ship/BlockTypes.js';
+import { getBlockDef } from '../ship/BlockCatalog.js';
+import {
+  AggregateStats,
+  computeAggregateStats,
+  pruneDisconnected,
+  hasCore,
+  instantiateBlueprint,
+  WeaponMount
+} from '../ship/ShipBlueprint.js';
 
 export type Faction = 'player' | 'bot' | 'remote';
 
 export interface ShipConfig {
   faction: Faction;
-  loadout: ShipLoadout;
+  recipe: { blockId: string; gx: number; gy: number }[];
   position: Vector2;
   name: string;
 }
 
 let nextShipId = 1;
 
+const STEER_DEADZONE = 18;
+
 /**
- * Shared physics + resource-pool logic for any ship (player or bot).
- * Movement/weapon *intent* is set by subclasses each tick via
- * `thrustIntent`, `targetAngle`, and `firing`; this class only resolves it.
+ * Shared physics + block-damage logic for any ship (player or bot). A
+ * ship's stats are not a fixed stat sheet — they're recomputed from
+ * whichever blocks are still alive and still connected to the Core, so
+ * losing blocks in combat visibly and immediately changes how the ship
+ * flies and fights.
  */
 export abstract class Ship {
   readonly id = nextShipId++;
@@ -25,12 +37,12 @@ export abstract class Ship {
 
   position: Vector2;
   velocity = new Vector2(0, 0);
-  angle = 0; // radians, 0 = facing +x
+  angle = 0;
 
-  loadout: ShipLoadout;
-  stats: ShipStats;
+  blueprint: ShipBlueprint;
+  private recipe: { blockId: string; gx: number; gy: number }[];
+  stats: AggregateStats;
 
-  hull: number;
   shield: number;
   energy: number;
   cargo = 0;
@@ -38,76 +50,142 @@ export abstract class Ship {
   alive = true;
   respawnTimer = 0;
   kills = 0;
+  score = 0;
 
-  /** -1..1, how hard to thrust forward this tick (set by controller). */
   thrustIntent = 0;
-  /** Desired facing angle this tick (set by controller). */
   targetAngle = 0;
   firing = false;
   mining = false;
 
-  private weaponCooldownRemainingMs = 0;
+  private weaponCooldowns = new Map<string, number>();
   private lastHitFlashMs = 0;
 
   constructor(cfg: ShipConfig) {
     this.faction = cfg.faction;
     this.name = cfg.name;
     this.position = cfg.position.clone();
-    this.loadout = cfg.loadout;
-    this.stats = computeShipStats(cfg.loadout);
-    this.hull = this.stats.maxHull;
+    this.recipe = cfg.recipe;
+    this.blueprint = instantiateBlueprint(cfg.recipe);
+    this.stats = computeAggregateStats(this.blueprint);
     this.shield = this.stats.maxShield;
     this.energy = this.stats.maxEnergy;
-    this.angle = 0;
-    this.targetAngle = 0;
   }
 
-  /** Recompute derived stats after a loadout change (module swap). */
-  refreshStats(): void {
-    const prevMaxHull = this.stats.maxHull;
-    const prevMaxShield = this.stats.maxShield;
+  /** Swaps the ship to a different blueprint template (used by the evolution system). Keeps current cargo/energy ratio. */
+  evolveTo(recipe: { blockId: string; gx: number; gy: number }[]): void {
+    this.recipe = recipe;
     const prevMaxEnergy = this.stats.maxEnergy;
-    this.stats = computeShipStats(this.loadout);
-    // Preserve current fill ratio rather than clamping to a possibly-lower max abruptly.
-    this.hull = prevMaxHull > 0 ? (this.hull / prevMaxHull) * this.stats.maxHull : this.stats.maxHull;
-    this.shield = prevMaxShield > 0 ? (this.shield / prevMaxShield) * this.stats.maxShield : this.stats.maxShield;
-    this.energy = prevMaxEnergy > 0 ? (this.energy / prevMaxEnergy) * this.stats.maxEnergy : this.stats.maxEnergy;
+    const energyRatio = prevMaxEnergy > 0 ? this.energy / prevMaxEnergy : 1;
+    this.blueprint = instantiateBlueprint(recipe);
+    this.stats = computeAggregateStats(this.blueprint);
+    this.shield = this.stats.maxShield;
+    this.energy = this.stats.maxEnergy * energyRatio;
+    this.weaponCooldowns.clear();
   }
 
   get cargoMassPenalty(): number {
-    // Cargo fill adds effective mass drag, per the design blueprint's
-    // "fuller hold = heavier, slower ship" trade-off.
     if (this.stats.cargoCapacity <= 0) return 1;
     const fillRatio = clamp(this.cargo / this.stats.cargoCapacity, 0, 1);
-    return 1 - fillRatio * 0.35; // up to 35% speed penalty at full cargo
+    return 1 - fillRatio * 0.35;
   }
 
-  canFire(): boolean {
-    return this.weaponCooldownRemainingMs <= 0 && this.energy >= this.stats.weaponEnergyCost;
+  /** 0..1 fraction of total block HP remaining — used for AI decisions and HUD "integrity" display. */
+  hullRatio(): number {
+    let hp = 0;
+    let maxHp = 0;
+    for (const b of this.blueprint) {
+      maxHp += getBlockDef(b.blockId).maxHp;
+      hp += Math.max(0, b.hp);
+    }
+    return maxHp > 0 ? hp / maxHp : 0;
   }
 
-  consumeFireCost(): void {
-    this.energy = Math.max(0, this.energy - this.stats.weaponEnergyCost);
-    this.weaponCooldownRemainingMs = this.stats.weaponCooldownMs;
+  /** Approximate world-space collision radius, derived from how far the farthest block sits from the Core. Recomputed on demand since it changes as blocks are lost. */
+  approxRadius(): number {
+    let maxDist = 1;
+    for (const b of this.blueprint) {
+      if (b.hp <= 0) continue;
+      const d = Math.hypot(b.gx, b.gy);
+      if (d > maxDist) maxDist = d;
+    }
+    return maxDist * GRID_CELL_SIZE + GRID_CELL_SIZE * 0.6;
   }
 
-  takeDamage(rawDamage: number, nowMs: number): void {
+  canFireMount(mount: WeaponMount): boolean {
+    const cd = this.weaponCooldowns.get(mount.instanceId) ?? 0;
+    return cd <= 0 && this.energy >= mount.energyCost;
+  }
+
+  consumeFireCost(mount: WeaponMount): void {
+    this.energy = Math.max(0, this.energy - mount.energyCost);
+    this.weaponCooldowns.set(mount.instanceId, mount.cooldownMs);
+  }
+
+  /**
+   * Resolves damage landing at a world-space point: shield absorbs first,
+   * then the specific block nearest that point takes the rest (reduced by
+   * its own armor). If that kills the block, connectivity is re-checked —
+   * anything left dangling off the Core is destroyed too, physically
+   * breaking the ship apart rather than the whole ship losing one shared
+   * HP bar. Returns the blocks that were destroyed this hit (including
+   * cascaded disconnections), so the caller can spawn debris for them.
+   */
+  applyBlockDamage(worldPoint: Vector2, rawDamage: number, nowMs: number): PlacedBlock[] {
     let remaining = rawDamage;
     if (this.shield > 0) {
       const absorbed = Math.min(this.shield, remaining);
       this.shield -= absorbed;
       remaining -= absorbed;
     }
-    if (remaining > 0) {
-      const reduced = remaining * (1 - this.stats.damageReduction);
-      this.hull -= reduced;
-    }
     this.lastHitFlashMs = nowMs;
-    if (this.hull <= 0) {
-      this.hull = 0;
-      this.alive = false;
-      this.respawnTimer = 3; // seconds
+    if (remaining <= 0) return [];
+
+    const target = this.findNearestBlock(worldPoint);
+    if (!target) return [];
+
+    const def = getBlockDef(target.blockId);
+    const applied = remaining * (1 - def.armor);
+    target.hp -= applied;
+
+    const destroyedNow: PlacedBlock[] = [];
+    if (target.hp <= 0) {
+      target.hp = 0;
+      destroyedNow.push({ ...target });
     }
+
+    const { alive, detached } = pruneDisconnected(this.blueprint);
+    for (const d of detached) destroyedNow.push({ ...d, hp: 0 });
+    this.blueprint = alive;
+    this.stats = computeAggregateStats(this.blueprint);
+
+    if (!hasCore(this.blueprint)) {
+      this.alive = false;
+      this.respawnTimer = 3;
+    }
+
+    return destroyedNow;
+  }
+
+  private findNearestBlock(worldPoint: Vector2): PlacedBlock | null {
+    // Transform the world hit point into ship-local grid space.
+    const rel = worldPoint.sub(this.position);
+    const localAngle = rel.angle() - this.angle;
+    const localLen = rel.length();
+    const local = Vector2.fromAngle(localAngle, localLen);
+    const cellX = local.x / GRID_CELL_SIZE;
+    const cellY = local.y / GRID_CELL_SIZE;
+
+    let best: PlacedBlock | null = null;
+    let bestDist = Infinity;
+    for (const b of this.blueprint) {
+      if (b.hp <= 0) continue;
+      const d = Math.hypot(b.gx - cellX, b.gy - cellY);
+      if (d < bestDist) {
+        bestDist = d;
+        best = b;
+      }
+    }
+    return best;
   }
 
   recentlyHit(nowMs: number, windowMs = 250): boolean {
@@ -120,23 +198,19 @@ export abstract class Ship {
       return;
     }
 
-    // --- Rotation: turn toward targetAngle at turnRate, shortest path.
     const diff = angleDiff(this.angle, this.targetAngle);
     const maxTurn = this.stats.turnRate * dt;
     this.angle += clamp(diff, -maxTurn, maxTurn);
 
-    // --- Thrust: accelerate forward along facing direction.
     const cargoFactor = this.cargoMassPenalty;
     if (this.thrustIntent !== 0) {
       const accel = Vector2.fromAngle(this.angle, this.stats.thrust * this.thrustIntent * cargoFactor);
       this.velocity = this.velocity.add(accel.scale(dt));
     }
 
-    // --- Drag so the ship coasts to a stop rather than sliding forever.
     const drag = 0.9;
     this.velocity = this.velocity.scale(Math.pow(drag, dt * 60));
 
-    // --- Clamp to effective top speed (reduced by cargo fill).
     const maxSpeed = this.stats.topSpeed * cargoFactor;
     const speed = this.velocity.length();
     if (speed > maxSpeed) {
@@ -145,37 +219,48 @@ export abstract class Ship {
 
     this.position = this.position.add(this.velocity.scale(dt));
 
-    // --- Weapon cooldown.
-    if (this.weaponCooldownRemainingMs > 0) {
-      this.weaponCooldownRemainingMs -= dt * 1000;
+    for (const [id, ms] of this.weaponCooldowns) {
+      if (ms > 0) this.weaponCooldowns.set(id, ms - dt * 1000);
     }
 
-    // --- Shield regen (only when not actively taking hits this tick is a
-    // nice-to-have; kept simple: always regen while below max).
-    if (this.shield < this.stats.maxShield) {
-      const drainOk = this.energy > 0;
-      if (drainOk) {
-        this.shield = Math.min(this.stats.maxShield, this.shield + this.stats.shieldRegenPerSec * dt);
-        this.energy = Math.max(0, this.energy - this.stats.shieldEnergyDrainPerSec * dt);
+    if (this.shield < this.stats.maxShield && this.energy > 0) {
+      this.shield = Math.min(this.stats.maxShield, this.shield + this.stats.shieldRegenPerSec * dt);
+      this.energy = Math.max(0, this.energy - this.stats.shieldEnergyDrainPerSec * dt);
+    }
+
+    if (this.stats.repairPerSec > 0 && this.energy > 0) {
+      this.repairMostDamagedBlock(this.stats.repairPerSec * dt);
+      this.energy = Math.max(0, this.energy - this.stats.repairEnergyCostPerSec * dt);
+    }
+
+    this.energy = Math.min(this.stats.maxEnergy, this.energy + this.stats.energyRegenPerSec * dt);
+  }
+
+  private repairMostDamagedBlock(amount: number): void {
+    let worst: PlacedBlock | null = null;
+    let worstRatio = 1;
+    for (const b of this.blueprint) {
+      const def = getBlockDef(b.blockId);
+      const ratio = b.hp / def.maxHp;
+      if (ratio < worstRatio) {
+        worstRatio = ratio;
+        worst = b;
       }
     }
-
-    // --- Passive utility repair.
-    if (this.stats.repairPerSec > 0 && this.hull < this.stats.maxHull && this.energy > 0) {
-      this.hull = Math.min(this.stats.maxHull, this.hull + this.stats.repairPerSec * dt);
-      this.energy = Math.max(0, this.energy - this.stats.utilityEnergyCostPerSec * dt);
+    if (worst) {
+      const def = getBlockDef(worst.blockId);
+      worst.hp = Math.min(def.maxHp, worst.hp + amount);
     }
-
-    // --- Passive energy regen.
-    this.energy = Math.min(this.stats.maxEnergy, this.energy + this.stats.energyRegenPerSec * dt);
   }
 
   respawn(at: Vector2): void {
     this.position = at.clone();
     this.velocity = new Vector2(0, 0);
-    this.hull = this.stats.maxHull;
+    this.blueprint = instantiateBlueprint(this.recipe);
+    this.stats = computeAggregateStats(this.blueprint);
     this.shield = this.stats.maxShield;
     this.energy = this.stats.maxEnergy;
+    this.weaponCooldowns.clear();
     this.alive = true;
   }
 }

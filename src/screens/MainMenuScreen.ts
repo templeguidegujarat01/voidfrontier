@@ -1,7 +1,6 @@
 import { Screen } from '../app/Screen.js';
 import { AVAILABLE_MODES, PLANNED_MODES, GameModeId } from '../app/MatchConfig.js';
 import { Progression } from '../progression/Progression.js';
-import { LoadoutStore } from '../loadouts/LoadoutStore.js';
 import { probeServer } from '../net/NetClient.js';
 
 const NAME_KEY = 'voidfrontier.playerName';
@@ -27,12 +26,11 @@ const SERVERS: ServerEntry[] = [
 
 export interface MainMenuOptions {
   onPlay: (modeId: GameModeId, selectedServer: ServerEntry | null) => void;
-  onOpenBuilder: () => void;
+  onOpenShipyard: () => void;
 }
 
 export class MainMenuScreen implements Screen {
   private progression = new Progression();
-  private loadoutStore = new LoadoutStore();
   private selectedServer: ServerEntry = SERVERS[0];
   private root: HTMLElement | null = null;
 
@@ -73,7 +71,7 @@ export class MainMenuScreen implements Screen {
                 <p class="fineprint">Saved to this browser only — no account backend yet.</p>
               </div>
 
-              <button id="open-builder" class="menu-btn wide">SHIP BUILDER</button>
+              <button id="open-shipyard" class="menu-btn wide">SHIPYARD</button>
               <button id="how-to-play" class="menu-btn wide">HOW TO PLAY</button>
               <button id="open-settings" class="menu-btn wide">SETTINGS</button>
             </section>
@@ -123,7 +121,7 @@ export class MainMenuScreen implements Screen {
     this.renderModeGrid();
     this.renderServerList();
 
-    root.querySelector('#open-builder')?.addEventListener('click', () => this.opts.onOpenBuilder());
+    root.querySelector('#open-shipyard')?.addEventListener('click', () => this.opts.onOpenShipyard());
     root.querySelector('#how-to-play')?.addEventListener('click', () => this.toggleModal('how-to-play-modal', true));
     root.querySelector('#close-howto')?.addEventListener('click', () => this.toggleModal('how-to-play-modal', false));
     root.querySelector('#open-settings')?.addEventListener('click', () => this.toggleModal('settings-modal', true));

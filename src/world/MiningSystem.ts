@@ -2,7 +2,7 @@ import { Vector2 } from '../core/Vector2.js';
 import { Ship } from '../entities/Ship.js';
 import { Asteroid } from '../world/Asteroid.js';
 
-const MINING_RANGE = 90;
+const MINING_RANGE = 55; // Drill blocks are explicitly close-range/high-risk per their design
 
 /** Returns the amount actually extracted this tick (0 if out of range/full/depleted). */
 export function tryMine(ship: Ship, asteroids: Asteroid[], dt: number): number {

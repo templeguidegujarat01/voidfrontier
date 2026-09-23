@@ -1,5 +1,3 @@
-import { ShipLoadout } from '../ship/ModuleTypes.js';
-
 export type GameModeId = 'practice' | 'frontier-ffa' | 'local-dev-multiplayer';
 
 export interface GameModeInfo {
@@ -44,7 +42,7 @@ export const PLANNED_MODES: GameModeInfo[] = [
 export interface MatchConfig {
   modeId: GameModeId;
   playerName: string;
-  loadout: ShipLoadout;
+  starterBlueprintId: string;
   botCount: number;
   killTarget: number | null; // null = no kill-target end condition
   timeLimitSec: number | null; // null = untimed

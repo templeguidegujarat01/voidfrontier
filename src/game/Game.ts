@@ -11,24 +11,19 @@ import { Ship } from '../entities/Ship.js';
 import { RemotePlayer } from '../entities/RemotePlayer.js';
 import { CombatSystem } from '../combat/CombatSystem.js';
 import { tryMine } from '../world/MiningSystem.js';
-import { DEFAULT_BOT_LOADOUT } from '../ship/ShipStats.js';
-import { ShipLoadout } from '../ship/ModuleTypes.js';
+import { Debris } from '../world/Debris.js';
+import { updateDebrisField } from '../world/DebrisSystem.js';
+import { blockColor, getBlockDef } from '../ship/BlockCatalog.js';
+import { findTemplate, TIER1_TEMPLATES, TIER2_TEMPLATES, BlueprintTemplate } from '../ship/StarterBlueprints.js';
 import { NetClient, NetStatus } from '../net/NetClient.js';
 import { MatchConfig, MatchResult } from '../app/MatchConfig.js';
 
 const BOT_NAMES = ['Rook-9', 'Ashen Veil', 'Marrow', 'Sable Fang', 'Cinderline', 'Glasswing', 'Ferro', 'Hollow Star'];
-
-// A handful of preset bot loadouts (different chassis) so bots feel varied,
-// not identical copies of each other.
-const BOT_LOADOUT_POOL: ShipLoadout[] = [
-  { ...DEFAULT_BOT_LOADOUT },
-  { ...DEFAULT_BOT_LOADOUT, coreFrameId: 'core.striker', driveId: 'drive.stormjet' },
-  { ...DEFAULT_BOT_LOADOUT, coreFrameId: 'core.defender', hullweaveId: 'weave.bulwark', wardplateId: 'ward.bastion' },
-  { ...DEFAULT_BOT_LOADOUT, coreFrameId: 'core.interceptor', driveId: 'drive.stormjet', emitterId: 'emitter.lance' }
-];
+const EVOLUTION_SCORE_THRESHOLD = 120;
 
 export interface GameCallbacks {
   onMatchEnd?: (result: MatchResult) => void;
+  onEvolutionAvailable?: (choices: BlueprintTemplate[]) => void;
 }
 
 export class Game {
@@ -42,11 +37,13 @@ export class Game {
   private readonly config: MatchConfig;
   private readonly callbacks: GameCallbacks;
 
-  private readonly player: PlayerShip;
+  readonly player: PlayerShip;
   private readonly bots: BotShip[] = [];
+  private readonly debris: Debris[] = [];
   private nowMs = 0;
   private matchStartMs = 0;
   private matchEnded = false;
+  private evolutionOffered = false;
 
   private net: NetClient | null = null;
   private readonly remotePlayers = new Map<string, RemotePlayer>();
@@ -60,18 +57,20 @@ export class Game {
     this.camera = new Camera(window.innerWidth, window.innerHeight);
     this.world = new World(6000, 6000, 90, 420);
     this.combat = new CombatSystem({
-      onShipDestroyed: (destroyed, killer) => this.handleShipDestroyed(destroyed, killer)
+      onShipDestroyed: (destroyed, killer) => this.handleShipDestroyed(destroyed, killer),
+      onBlocksDestroyed: (ship, blocks, atPos) => this.handleBlocksDestroyed(ship, blocks, atPos)
     });
 
+    const starterTemplate = findTemplate(config.starterBlueprintId) ?? TIER1_TEMPLATES[0];
     this.player = new PlayerShip({
       faction: 'player',
-      loadout: config.loadout,
+      recipe: starterTemplate.blocks,
       position: new Vector2(0, 0),
       name: config.playerName || 'You'
     });
-    this.hud.setLoadout(config.loadout);
 
     const botCount = Math.max(0, Math.min(config.botCount, 24));
+    const botTemplatePool = TIER1_TEMPLATES;
     for (let i = 0; i < botCount; i++) {
       const angle = (i / Math.max(1, botCount)) * Math.PI * 2;
       const dist = 900 + Math.random() * 1400;
@@ -79,7 +78,7 @@ export class Game {
       this.bots.push(
         new BotShip({
           faction: 'bot',
-          loadout: BOT_LOADOUT_POOL[i % BOT_LOADOUT_POOL.length],
+          recipe: botTemplatePool[i % botTemplatePool.length].blocks,
           position: pos,
           name: BOT_NAMES[i % BOT_NAMES.length]
         })
@@ -89,11 +88,7 @@ export class Game {
     window.addEventListener('resize', this.handleResize);
     this.handleResize();
 
-    this.loop = new GameLoop(
-      (dt) => this.update(dt),
-      (alpha) => this.render(alpha),
-      60
-    );
+    this.loop = new GameLoop((dt) => this.update(dt), (alpha) => this.render(alpha), 60);
 
     if (config.modeId === 'local-dev-multiplayer' && config.serverWsUrl) {
       this.setupNetworking(config.serverWsUrl);
@@ -123,9 +118,7 @@ export class Game {
         }
         rp.applySnapshot(new Vector2(p.x, p.y), p.angle, p.hull, p.maxHull, p.alive, this.nowMs);
       }
-      if (net.status === 'online') {
-        this.hud.setNetStatus(`Online (${this.remotePlayers.size + 1} players)`);
-      }
+      if (net.status === 'online') this.hud.setNetStatus(`Online (${this.remotePlayers.size + 1} players)`);
     });
     net.onJoin((p) => {
       if (p.id === net.localId) return;
@@ -133,12 +126,10 @@ export class Game {
     });
     net.onLeave((id) => {
       this.remotePlayers.delete(id);
-      if (net.status === 'online') {
-        this.hud.setNetStatus(`Online (${this.remotePlayers.size + 1} players)`);
-      }
+      if (net.status === 'online') this.hud.setNetStatus(`Online (${this.remotePlayers.size + 1} players)`);
     });
     net.connect(wsUrl, this.config.playerName || 'Pilot').catch(() => {
-      // Status already reflects offline/error; local bots remain fully playable.
+      /* status already reflects offline/error; local bots remain fully playable */
     });
   }
 
@@ -150,11 +141,22 @@ export class Game {
   };
 
   private handleShipDestroyed(destroyed: Ship, killer: Ship | null): void {
-    if (killer) killer.kills += 1;
+    if (killer) {
+      killer.kills += 1;
+      killer.score += Math.round(destroyed.stats.totalValue * 0.5);
+    }
     if (destroyed === this.player) this.player.deaths += 1;
 
     if (this.config.killTarget !== null && killer && killer.kills >= this.config.killTarget) {
       this.endMatch(killer === this.player);
+    }
+  }
+
+  private handleBlocksDestroyed(ship: Ship, blocks: { blockId: string }[], atPos: Vector2): void {
+    for (const b of blocks) {
+      const def = getBlockDef(b.blockId);
+      const spawnPos = atPos.add(new Vector2((Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12));
+      this.debris.push(new Debris(spawnPos, Math.max(1, Math.round(def.cost * 0.4)), blockColor(def.category)));
     }
   }
 
@@ -176,15 +178,20 @@ export class Game {
     this.matchStartMs = performance.now();
     this.nowMs = this.matchStartMs;
     this.loop.start();
-    // Exposed for debugging/QA only — not part of runtime game logic.
     (window as unknown as { __voidfrontier: Game }).__voidfrontier = this;
   }
 
-  /** Ends the session without recording a match result (e.g. player quit via pause menu). */
   quit(): void {
     this.loop.stop();
     this.net?.disconnect();
     window.removeEventListener('resize', this.handleResize);
+  }
+
+  applyEvolution(templateId: string): void {
+    const template = findTemplate(templateId);
+    if (!template) return;
+    this.player.evolveTo(template.blocks);
+    this.hud.setEvolutionLabel(template.name);
   }
 
   private update(dt: number): void {
@@ -196,13 +203,18 @@ export class Game {
     this.player.position = this.world.clampToBounds(this.player.position);
 
     const collected = tryMine(this.player, this.world.asteroids, dt);
-    if (collected > 0) this.player.resourcesCollected += collected;
+    if (collected > 0) {
+      this.player.resourcesCollected += collected;
+      this.player.score += collected;
+    }
 
     for (const bot of this.bots) {
       if (bot.alive) {
         bot.think([this.player], this.bots, this.world.asteroids, dt);
         bot.update(dt);
         bot.position = this.world.clampToBounds(bot.position);
+        const botMined = tryMine(bot, this.world.asteroids, dt);
+        if (botMined > 0) bot.score += botMined;
       } else if (bot.respawnTimer <= 0) {
         bot.respawn(bot.position);
       } else {
@@ -217,8 +229,22 @@ export class Game {
     for (const bot of this.bots) this.combat.tryFire(bot, this.nowMs);
     this.combat.update(dt, this.nowMs, allShips);
 
+    const collectedBy = updateDebrisField(this.debris, allShips, dt);
+    for (const [ship, amount] of collectedBy) {
+      ship.score += amount;
+      if (ship === this.player) this.player.resourcesCollected += amount;
+    }
+    for (let i = this.debris.length - 1; i >= 0; i--) {
+      if (this.debris[i].expired) this.debris.splice(i, 1);
+    }
+
     if (!this.player.alive && this.player.respawnTimer <= 0) {
       this.player.respawn(new Vector2(0, 0));
+    }
+
+    if (!this.evolutionOffered && this.player.score >= EVOLUTION_SCORE_THRESHOLD) {
+      this.evolutionOffered = true;
+      this.callbacks.onEvolutionAvailable?.(TIER2_TEMPLATES);
     }
 
     if (this.net && this.net.status === 'online') {
@@ -259,6 +285,7 @@ export class Game {
     this.renderer.drawStarfield(this.camera, this.world.stars);
     this.renderer.drawWorldBounds(this.camera, this.world);
     this.renderer.drawAsteroids(this.camera, this.world.asteroids);
+    this.renderer.drawDebris(this.camera, this.debris);
     this.renderer.drawProjectiles(this.camera, this.combat.projectiles);
 
     for (const bot of this.bots) this.renderer.drawShip(this.camera, bot, this.nowMs);
