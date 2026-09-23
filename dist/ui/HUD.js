@@ -1,16 +1,4 @@
-import { getModule } from '../ship/ModuleCatalog.js';
-const CATEGORY_LABELS = [
-    ['coreFrameId', 'Core Frame'],
-    ['driveId', 'Drive'],
-    ['emitterId', 'Emitter'],
-    ['wardplateId', 'Wardplate'],
-    ['hullweaveId', 'Hullweave'],
-    ['reactorId', 'Reactor'],
-    ['holdId', 'Hold'],
-    ['drillId', 'Drill'],
-    ['arrayId', 'Array'],
-    ['utilityRigId', 'Utility Rig']
-];
+import { getBlockDef } from '../ship/BlockCatalog.js';
 export class HUD {
     constructor(root) {
         const req = (id) => {
@@ -28,29 +16,22 @@ export class HUD {
             energyText: req('energy-text'),
             cargoBar: req('cargo-bar'),
             cargoText: req('cargo-text'),
-            moduleList: req('module-list'),
+            blockSummary: req('block-summary'),
             statKills: req('stat-kills'),
-            statResources: req('stat-resources'),
+            statScore: req('stat-score'),
             statSpeed: req('stat-speed'),
             respawnOverlay: req('respawn-overlay'),
             respawnTimer: req('respawn-timer'),
             miningHint: req('mining-hint'),
             minimapCanvas: req('minimap'),
             matchInfo: req('match-info'),
-            netStatus: req('net-status')
+            netStatus: req('net-status'),
+            evolutionLabel: req('evolution-label')
         };
         const ctx = this.el.minimapCanvas.getContext('2d');
         if (!ctx)
             throw new Error('Minimap canvas unsupported');
         this.minimapCtx = ctx;
-    }
-    /** Renders the module list from the ship's *actual* equipped loadout (not a fixed placeholder). */
-    setLoadout(loadout) {
-        const rows = CATEGORY_LABELS.map(([key, label]) => {
-            const mod = getModule(loadout[key]);
-            return `<div class="module-row"><span class="module-cat">${label}</span><span class="module-name">${mod.name}</span></div>`;
-        });
-        this.el.moduleList.innerHTML = rows.join('');
     }
     setMatchInfo(text) {
         this.el.matchInfo.textContent = text;
@@ -59,10 +40,16 @@ export class HUD {
     setNetStatus(text) {
         this.el.netStatus.textContent = text;
     }
+    setEvolutionLabel(tierName) {
+        this.el.evolutionLabel.textContent = `EVOLVED: ${tierName}`;
+        this.el.evolutionLabel.style.display = 'block';
+    }
     update(player, world, asteroids, bots, remotePlayers = []) {
         const s = player.stats;
-        this.setBar(this.el.hullBar, player.hull, s.maxHull);
-        this.el.hullText.textContent = `${Math.ceil(player.hull)} / ${Math.round(s.maxHull)}`;
+        const hullPct = player.hullRatio() * 100;
+        this.el.hullBar.style.width = `${hullPct}%`;
+        const aliveBlocks = player.blueprint.filter((b) => b.hp > 0).length;
+        this.el.hullText.textContent = `${Math.round(hullPct)}% (${aliveBlocks} blocks)`;
         this.setBar(this.el.shieldBar, player.shield, s.maxShield);
         this.el.shieldText.textContent = `${Math.ceil(player.shield)} / ${Math.round(s.maxShield)}`;
         this.setBar(this.el.energyBar, player.energy, s.maxEnergy);
@@ -70,14 +57,28 @@ export class HUD {
         this.setBar(this.el.cargoBar, player.cargo, s.cargoCapacity);
         this.el.cargoText.textContent = `${Math.floor(player.cargo)} / ${Math.round(s.cargoCapacity)}`;
         this.el.statKills.textContent = String(player.kills);
-        this.el.statResources.textContent = String(Math.floor(player.resourcesCollected));
+        this.el.statScore.textContent = String(Math.floor(player.score));
         this.el.statSpeed.textContent = `${Math.round(player.velocity.length())} u/s`;
         this.el.respawnOverlay.style.display = player.alive ? 'none' : 'flex';
         if (!player.alive) {
             this.el.respawnTimer.textContent = Math.max(0, player.respawnTimer).toFixed(1);
         }
         this.el.miningHint.style.display = player.mining && player.alive ? 'block' : 'none';
+        this.renderBlockSummary(player);
         this.drawMinimap(player, world, asteroids, bots, remotePlayers);
+    }
+    renderBlockSummary(player) {
+        const counts = new Map();
+        for (const b of player.blueprint) {
+            if (b.hp <= 0)
+                continue;
+            const def = getBlockDef(b.blockId);
+            counts.set(def.name, (counts.get(def.name) ?? 0) + 1);
+        }
+        const rows = [...counts.entries()]
+            .map(([name, count]) => `<div class="module-row"><span class="module-cat">${name}</span><span class="module-name">x${count}</span></div>`)
+            .join('');
+        this.el.blockSummary.innerHTML = rows;
     }
     setBar(el, value, max) {
         const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;

@@ -1,25 +1,41 @@
-import { Vector2 } from '../core/Vector2.js';
+import { Vector2, clamp } from '../core/Vector2.js';
+import { GRID_CELL_SIZE } from '../ship/BlockTypes.js';
+import { getBlockDef, blockColor } from '../ship/BlockCatalog.js';
 const PALETTE = {
     bg: '#0b0e19',
     bgDeep: '#05060c',
-    gridLine: 'rgba(94, 234, 212, 0.05)',
     boundary: 'rgba(255, 176, 89, 0.35)',
     star: 'rgba(226, 232, 240, 0.85)',
     asteroid: '#4b4f63',
     asteroidRim: '#7d8199',
     resourceGlow: 'rgba(94, 234, 212, 0.55)',
-    playerHull: '#5eead4',
-    playerAccent: '#e8fffb',
-    botHull: '#ffb059',
-    botAccent: '#fff3e6',
-    remoteHull: '#a78bfa',
-    remoteAccent: '#f3eaff',
-    shield: 'rgba(94, 234, 212, 0.28)',
-    shieldRim: 'rgba(94, 234, 212, 0.65)',
+    playerAccent: '#5eead4',
+    botAccent: '#ffb059',
+    remoteAccent: '#a78bfa',
+    shield: 'rgba(94, 234, 212, 0.22)',
+    shieldRim: 'rgba(94, 234, 212, 0.6)',
     projectilePlayer: '#8af7e4',
     projectileBot: '#ffcf99',
-    hitFlash: 'rgba(255, 255, 255, 0.85)'
+    hitFlash: '#ffffff'
 };
+function hexToRgb(hex) {
+    const clean = hex.replace('#', '');
+    return {
+        r: parseInt(clean.substring(0, 2), 16),
+        g: parseInt(clean.substring(2, 4), 16),
+        b: parseInt(clean.substring(4, 6), 16)
+    };
+}
+/** Damaged blocks visibly darken/scorch toward a burnt tone as their HP drops. */
+function damageTint(hex, healthRatio) {
+    const burnt = { r: 35, g: 20, b: 18 };
+    const c = hexToRgb(hex);
+    const t = clamp(healthRatio, 0, 1);
+    const r = Math.round(burnt.r + (c.r - burnt.r) * t);
+    const g = Math.round(burnt.g + (c.g - burnt.g) * t);
+    const b = Math.round(burnt.b + (c.b - burnt.b) * t);
+    return `rgb(${r},${g},${b})`;
+}
 export class Renderer {
     constructor(canvas) {
         this.canvas = canvas;
@@ -50,7 +66,6 @@ export class Renderer {
         for (const star of stars) {
             const parallax = 0.25 + star.layer * 0.25;
             const screen = new Vector2(star.x - camera.position.x * parallax + camera.viewWidth / 2, star.y - camera.position.y * parallax + camera.viewHeight / 2);
-            // Wrap stars around the viewport so the field feels infinite.
             const wx = ((screen.x % camera.viewWidth) + camera.viewWidth) % camera.viewWidth;
             const wy = ((screen.y % camera.viewHeight) + camera.viewHeight) % camera.viewHeight;
             ctx.globalAlpha = 0.35 + star.layer * 0.25;
@@ -99,13 +114,27 @@ export class Renderer {
             ctx.strokeStyle = PALETTE.asteroidRim;
             ctx.lineWidth = 2;
             ctx.stroke();
-            // Resource fill ring.
             const ratio = a.resource / a.maxResource;
             ctx.beginPath();
             ctx.arc(0, 0, a.radius + 6, -Math.PI / 2, -Math.PI / 2 + ratio * Math.PI * 2);
             ctx.strokeStyle = PALETTE.resourceGlow;
             ctx.lineWidth = 3;
             ctx.stroke();
+            ctx.restore();
+        }
+    }
+    drawDebris(camera, debris) {
+        const ctx = this.ctx;
+        for (const d of debris) {
+            if (d.expired)
+                continue;
+            const screen = camera.worldToScreen(d.position);
+            ctx.save();
+            ctx.translate(screen.x, screen.y);
+            ctx.fillStyle = d.color;
+            ctx.globalAlpha = 0.85;
+            ctx.fillRect(-3, -3, 6, 6);
+            ctx.globalAlpha = 1;
             ctx.restore();
         }
     }
@@ -128,45 +157,55 @@ export class Renderer {
             return;
         const ctx = this.ctx;
         const screen = camera.worldToScreen(ship.position);
-        const hullColor = ship.faction === 'player' ? PALETTE.playerHull : ship.faction === 'remote' ? PALETTE.remoteHull : PALETTE.botHull;
-        const accentColor = ship.faction === 'player' ? PALETTE.playerAccent : ship.faction === 'remote' ? PALETTE.remoteAccent : PALETTE.botAccent;
+        const accent = ship.faction === 'player' ? PALETTE.playerAccent : ship.faction === 'remote' ? PALETTE.remoteAccent : PALETTE.botAccent;
+        const radius = ship.approxRadius ? ship.approxRadius() : 20;
         ctx.save();
         ctx.translate(screen.x, screen.y);
         ctx.rotate(ship.angle);
-        // Shield bubble.
         if (ship.shield > 0) {
             ctx.beginPath();
-            ctx.arc(0, 0, 22, 0, Math.PI * 2);
+            ctx.arc(0, 0, radius + 6, 0, Math.PI * 2);
             ctx.fillStyle = PALETTE.shield;
             ctx.fill();
             ctx.strokeStyle = PALETTE.shieldRim;
             ctx.lineWidth = 1.5;
             ctx.stroke();
         }
-        // Original geometric kite-shaped hull (deliberately not a generic "sci-fi fighter" silhouette).
-        ctx.beginPath();
-        ctx.moveTo(18, 0);
-        ctx.lineTo(-10, 10);
-        ctx.lineTo(-4, 0);
-        ctx.lineTo(-10, -10);
-        ctx.closePath();
-        ctx.fillStyle = ship.recentlyHit(nowMs) ? PALETTE.hitFlash : hullColor;
-        ctx.fill();
-        ctx.strokeStyle = accentColor;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-        // Engine glow.
-        ctx.beginPath();
-        ctx.arc(-8, 0, 3, 0, Math.PI * 2);
-        ctx.fillStyle = accentColor;
-        ctx.fill();
+        const hitFlash = ship.recentlyHit(nowMs);
+        const blocks = ship.blueprint;
+        if (blocks && blocks.length > 0) {
+            const cell = GRID_CELL_SIZE;
+            const size = cell * 0.86;
+            for (const b of blocks) {
+                if (b.hp <= 0)
+                    continue;
+                const def = getBlockDef(b.blockId);
+                const px = b.gx * cell;
+                const py = b.gy * cell;
+                const healthRatio = clamp(b.hp / def.maxHp, 0, 1);
+                ctx.fillStyle = hitFlash ? PALETTE.hitFlash : damageTint(blockColor(def.category), healthRatio);
+                ctx.fillRect(px - size / 2, py - size / 2, size, size);
+                ctx.strokeStyle = accent;
+                ctx.lineWidth = 1;
+                ctx.strokeRect(px - size / 2, py - size / 2, size, size);
+            }
+        }
+        else {
+            ctx.beginPath();
+            ctx.moveTo(18, 0);
+            ctx.lineTo(-10, 10);
+            ctx.lineTo(-4, 0);
+            ctx.lineTo(-10, -10);
+            ctx.closePath();
+            ctx.fillStyle = hitFlash ? PALETTE.hitFlash : accent;
+            ctx.fill();
+        }
         ctx.restore();
-        // Nameplate.
         ctx.save();
         ctx.font = '11px "Space Grotesk", sans-serif';
         ctx.fillStyle = 'rgba(226,232,240,0.7)';
         ctx.textAlign = 'center';
-        ctx.fillText(ship.name, screen.x, screen.y - 28);
+        ctx.fillText(ship.name, screen.x, screen.y - radius - 12);
         ctx.restore();
     }
 }

@@ -1,6 +1,5 @@
 import { AVAILABLE_MODES, PLANNED_MODES } from '../app/MatchConfig.js';
 import { Progression } from '../progression/Progression.js';
-import { LoadoutStore } from '../loadouts/LoadoutStore.js';
 import { probeServer } from '../net/NetClient.js';
 const NAME_KEY = 'voidfrontier.playerName';
 // Original server names (see design blueprint). All currently point at the
@@ -19,7 +18,6 @@ export class MainMenuScreen {
     constructor(opts) {
         this.opts = opts;
         this.progression = new Progression();
-        this.loadoutStore = new LoadoutStore();
         this.selectedServer = SERVERS[0];
         this.root = null;
     }
@@ -57,7 +55,7 @@ export class MainMenuScreen {
                 <p class="fineprint">Saved to this browser only — no account backend yet.</p>
               </div>
 
-              <button id="open-builder" class="menu-btn wide">SHIP BUILDER</button>
+              <button id="open-shipyard" class="menu-btn wide">SHIPYARD</button>
               <button id="how-to-play" class="menu-btn wide">HOW TO PLAY</button>
               <button id="open-settings" class="menu-btn wide">SETTINGS</button>
             </section>
@@ -104,7 +102,7 @@ export class MainMenuScreen {
         });
         this.renderModeGrid();
         this.renderServerList();
-        root.querySelector('#open-builder')?.addEventListener('click', () => this.opts.onOpenBuilder());
+        root.querySelector('#open-shipyard')?.addEventListener('click', () => this.opts.onOpenShipyard());
         root.querySelector('#how-to-play')?.addEventListener('click', () => this.toggleModal('how-to-play-modal', true));
         root.querySelector('#close-howto')?.addEventListener('click', () => this.toggleModal('how-to-play-modal', false));
         root.querySelector('#open-settings')?.addEventListener('click', () => this.toggleModal('settings-modal', true));

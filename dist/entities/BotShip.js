@@ -1,5 +1,6 @@
 import { Ship } from './Ship.js';
 import { Vector2, clamp } from '../core/Vector2.js';
+import { getBlockDef } from '../ship/BlockCatalog.js';
 const LOW_HEALTH_RATIO = 0.3; // below this fraction of (hull+shield), consider fleeing
 const RETREAT_SAFE_RATIO = 0.65; // regen to this fraction before re-engaging
 const ASSIST_RANGE = 700;
@@ -26,11 +27,23 @@ export class BotShip extends Ship {
         const dist = Math.random() * this.patrolRadius;
         return this.homeAnchor.add(Vector2.fromAngle(angle, dist));
     }
+    /** Combined hull+shield survivability ratio, computed from live block HP (not a fixed stat sheet). */
     healthRatio() {
-        const maxPool = this.stats.maxHull + this.stats.maxShield;
-        if (maxPool <= 0)
-            return 0;
-        return (this.hull + this.shield) / maxPool;
+        let hp = 0;
+        let maxHp = 0;
+        for (const b of this.blueprint) {
+            maxHp += getBlockDef(b.blockId).maxHp;
+            hp += Math.max(0, b.hp);
+        }
+        const poolMax = maxHp + this.stats.maxShield;
+        const poolCur = hp + this.shield;
+        return poolMax > 0 ? poolCur / poolMax : 0;
+    }
+    /** Best (longest) weapon range among currently-attached weapon blocks, or a short default if unarmed. */
+    effectiveWeaponRange() {
+        if (this.stats.weaponMounts.length === 0)
+            return 260;
+        return Math.max(...this.stats.weaponMounts.map((w) => w.range));
     }
     /**
      * @param enemies Ships this bot may fight (typically just the local player, but plural for future team modes).
@@ -46,6 +59,7 @@ export class BotShip extends Ship {
         const nearestEnemy = this.nearest(livingEnemies);
         const distToEnemy = nearestEnemy ? Vector2.distance(this.position, nearestEnemy.position) : Infinity;
         const enemyVisible = nearestEnemy !== null && distToEnemy <= this.stats.radarRange;
+        const weaponRange = this.effectiveWeaponRange();
         // --- Decide state ---------------------------------------------------
         if (this.state === 'fleeing' || this.state === 'retreating') {
             // Committed to disengaging until either healed up or the threat is gone/far.
@@ -61,7 +75,7 @@ export class BotShip extends Ship {
                 this.state = 'fleeing';
                 this.fleeUntilRatio = RETREAT_SAFE_RATIO;
             }
-            else if (distToEnemy <= this.stats.weaponRange * 0.9) {
+            else if (distToEnemy <= weaponRange * 0.9) {
                 this.state = 'attacking';
             }
             else {
@@ -99,8 +113,8 @@ export class BotShip extends Ship {
                 }
                 const toEnemy = nearestEnemy.position.sub(this.position);
                 this.targetAngle = toEnemy.angle();
-                this.thrustIntent = distToEnemy < this.stats.weaponRange * 0.45 ? -0.3 : 0.35;
-                this.firing = this.canFire();
+                this.thrustIntent = distToEnemy < weaponRange * 0.45 ? -0.3 : 0.35;
+                this.firing = this.stats.weaponMounts.length > 0;
                 this.mining = false;
                 break;
             }
@@ -191,10 +205,7 @@ export class BotShip extends Ship {
     }
     /** Rough 0..1 "how dangerous does this enemy look" estimate from visible info only. */
     estimateEnemyThreat(enemy) {
-        const maxPool = enemy.stats.maxHull + enemy.stats.maxShield;
-        if (maxPool <= 0)
-            return 0.5;
-        return clamp((enemy.hull + enemy.shield) / maxPool, 0, 1);
+        return clamp(enemy.hullRatio(), 0, 1);
     }
     nearest(ships) {
         let best = null;

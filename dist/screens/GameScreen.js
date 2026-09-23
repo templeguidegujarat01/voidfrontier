@@ -1,4 +1,5 @@
 import { Game } from '../game/Game.js';
+import { computeAggregateStats, instantiateBlueprint } from '../ship/ShipBlueprint.js';
 export class GameScreen {
     constructor(opts) {
         this.opts = opts;
@@ -16,6 +17,7 @@ export class GameScreen {
       <canvas id="game-canvas"></canvas>
       <div id="hud-root">
         <div class="panel status-panel">
+          <div id="evolution-label" class="evolution-label" style="display:none;"></div>
           <div class="stat-row">
             <span class="stat-label">HULL</span>
             <div class="bar-track"><div id="hull-bar" class="bar-fill hull-fill"></div></div>
@@ -44,14 +46,14 @@ export class GameScreen {
         </div>
 
         <div class="panel module-panel">
-          <div class="panel-title">SHIP CONFIGURATION</div>
-          <div id="module-list"></div>
+          <div class="panel-title">SHIP STRUCTURE</div>
+          <div id="block-summary"></div>
         </div>
 
         <div class="panel session-panel">
           <div class="panel-title">SESSION</div>
           <div class="stat-row"><span class="stat-label">Kills</span><span id="stat-kills" class="stat-value">0</span></div>
-          <div class="stat-row"><span class="stat-label">Resources</span><span id="stat-resources" class="stat-value">0</span></div>
+          <div class="stat-row"><span class="stat-label">Score</span><span id="stat-score" class="stat-value">0</span></div>
           <div class="stat-row"><span class="stat-label">Speed</span><span id="stat-speed" class="stat-value">0 u/s</span></div>
         </div>
 
@@ -66,10 +68,19 @@ export class GameScreen {
         </div>
 
         <div class="controls-hint">
-          <strong>Mouse</strong> steer &amp; thrust toward cursor &middot;
+          <strong>Mouse</strong> steer toward cursor &middot;
           <strong>Left Click</strong> fire &middot;
-          <strong>E</strong> mine nearest asteroid &middot;
+          <strong>Right Click</strong> brake &middot;
+          <strong>E</strong> mine (close range) &middot;
           <strong>Esc</strong> pause
+        </div>
+      </div>
+
+      <div id="evolution-overlay" class="modal-overlay" style="display:none;">
+        <div class="modal-box evolution-box">
+          <h2>EVOLUTION AVAILABLE</h2>
+          <p class="fineprint">Your ship has earned enough value to evolve. Choose a path — your existing cargo and energy carry over.</p>
+          <div id="evolution-choices" class="evolution-choices"></div>
         </div>
       </div>
 
@@ -84,7 +95,8 @@ export class GameScreen {
         const canvas = root.querySelector('#game-canvas');
         const hudRoot = root.querySelector('#hud-root');
         this.game = new Game(canvas, hudRoot, this.opts.config, {
-            onMatchEnd: (result) => this.opts.onMatchEnd(result)
+            onMatchEnd: (result) => this.opts.onMatchEnd(result),
+            onEvolutionAvailable: (choices) => this.showEvolutionPicker(choices)
         });
         this.game.start();
         window.addEventListener('keydown', this.keyHandler);
@@ -94,6 +106,37 @@ export class GameScreen {
             this.opts.onQuit();
         });
     }
+    showEvolutionPicker(choices) {
+        if (!this.root)
+            return;
+        const overlay = this.root.querySelector('#evolution-overlay');
+        const container = this.root.querySelector('#evolution-choices');
+        if (!overlay || !container)
+            return;
+        container.innerHTML = choices
+            .map((c) => {
+            const stats = computeAggregateStats(instantiateBlueprint(c.blocks));
+            return `
+        <button class="evolution-card" data-template="${c.id}">
+          <div class="evolution-card-name">${c.name.toUpperCase()}</div>
+          <div class="evolution-card-desc">${c.description}</div>
+          <div class="evolution-card-stats">
+            <span>Blocks: ${stats.blockCount}</span>
+            <span>Mass: ${stats.mass.toFixed(0)}</span>
+            <span>Weapons: ${stats.weaponMounts.length}</span>
+          </div>
+        </button>`;
+        })
+            .join('');
+        container.querySelectorAll('.evolution-card').forEach((card) => {
+            card.addEventListener('click', () => {
+                const templateId = card.dataset.template;
+                this.game?.applyEvolution(templateId);
+                overlay.style.display = 'none';
+            });
+        });
+        overlay.style.display = 'flex';
+    }
     togglePause() {
         if (!this.root)
             return;
@@ -101,8 +144,6 @@ export class GameScreen {
         const overlay = this.root.querySelector('#pause-overlay');
         if (overlay)
             overlay.style.display = this.paused ? 'flex' : 'none';
-        // Note: this is a UI pause (input/visual) — the underlying loop keeps
-        // ticking so bots/physics don't desync from a networked server clock.
     }
     unmount() {
         window.removeEventListener('keydown', this.keyHandler);
