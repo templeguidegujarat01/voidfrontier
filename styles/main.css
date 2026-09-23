@@ -817,3 +817,133 @@ html, body {
   .menu-grid { grid-template-columns: 1fr; }
   .builder-layout { grid-template-columns: 1fr; height: auto; }
 }
+
+/* ---------------- Block-model additions ---------------- */
+
+.starter-choices, .evolution-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.starter-card, .evolution-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.starter-card:hover, .evolution-card:hover {
+  border-color: var(--teal);
+  background: rgba(94, 234, 212, 0.06);
+}
+
+.starter-card-selected {
+  border-color: var(--teal);
+  background: rgba(94, 234, 212, 0.1);
+}
+
+.starter-card-name, .evolution-card-name {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.starter-card-desc, .evolution-card-desc {
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  margin-bottom: 8px;
+  min-height: 32px;
+}
+
+.starter-card-stats, .evolution-card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 9px;
+  color: var(--teal-soft);
+}
+
+.evolution-box {
+  max-width: 640px;
+}
+
+.evolution-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--teal);
+  background: rgba(94, 234, 212, 0.1);
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.shipyard-layout {
+  position: relative;
+  z-index: 1;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+  overflow-y: auto;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.shipyard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.shipyard-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.ship-preview {
+  position: relative;
+  margin: 0 auto 10px;
+  background: rgba(0,0,0,0.2);
+  border-radius: 4px;
+}
+
+.ship-preview-block {
+  position: absolute;
+  border-radius: 2px;
+  border: 1px solid rgba(0,0,0,0.3);
+}
+
+.shipyard-card-name {
+  font-weight: 600;
+  font-size: 13px;
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+.shipyard-card-desc {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.4;
+  margin-bottom: 8px;
+  min-height: 28px;
+}
+
+.shipyard-card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  font-size: 9px;
+  color: var(--teal-soft);
+}
