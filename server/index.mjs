@@ -25,7 +25,9 @@ const distRoot = path.resolve(__dirname, '..', 'dist');
 const { Ship } = await import(path.join(distRoot, 'entities', 'Ship.js'));
 const { Vector2, clamp } = await import(path.join(distRoot, 'core', 'Vector2.js'));
 const { World } = await import(path.join(distRoot, 'world', 'World.js'));
-const { DEFAULT_PLAYER_LOADOUT } = await import(path.join(distRoot, 'ship', 'ShipStats.js'));
+const { TIER1_TEMPLATES } = await import(path.join(distRoot, 'ship', 'StarterBlueprints.js'));
+
+const STARTER_RECIPE = TIER1_TEMPLATES[0].blocks;
 
 const PORT = Number(process.env.PORT) || 8787;
 const CAPACITY = Number(process.env.CAPACITY) || 80;
@@ -60,8 +62,8 @@ function snapshotPlayers() {
     x: c.ship.position.x,
     y: c.ship.position.y,
     angle: c.ship.angle,
-    hull: Math.round(c.ship.hull),
-    maxHull: Math.round(c.ship.stats.maxHull),
+    hull: Math.round(c.ship.hullRatio() * 100),
+    maxHull: 100,
     alive: c.ship.alive
   }));
 }
@@ -105,14 +107,14 @@ attachWebSocketServer(httpServer, {
         const name = typeof msg.name === 'string' ? msg.name.slice(0, 24) : 'Pilot';
         const ship = new ServerPlayerShip({
           faction: 'player',
-          loadout: DEFAULT_PLAYER_LOADOUT,
+          recipe: STARTER_RECIPE,
           position: randomSpawn(),
           name
         });
         clients.set(id, { conn, ship, name });
 
         conn.send(JSON.stringify({ type: 'welcome', id, players: snapshotPlayers() }));
-        broadcast({ type: 'join', player: { id, name, x: ship.position.x, y: ship.position.y, angle: ship.angle, hull: ship.hull, maxHull: ship.stats.maxHull, alive: ship.alive } }, id);
+        broadcast({ type: 'join', player: { id, name, x: ship.position.x, y: ship.position.y, angle: ship.angle, hull: Math.round(ship.hullRatio() * 100), maxHull: 100, alive: ship.alive } }, id);
         console.log(`[voidfrontier] ${name} joined (${clients.size}/${CAPACITY})`);
         return;
       }
