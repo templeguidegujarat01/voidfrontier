@@ -1,9 +1,8 @@
 /**
- * Thin wrapper around the browser's native WebSocket. Talks to
- * server/index.mjs (run separately — see README). This is a real network
- * client, not a mock: if no server is reachable, status goes to
- * 'offline'/'error' and callers must handle that rather than pretending
- * a connection exists.
+ * Browser-side WebSocket client for the authoritative multiplayer
+ * server (server/index.mjs). Every event here reflects something the
+ * SERVER decided — this client never infers or guesses combat/mining
+ * outcomes from partial data.
  */
 export class NetClient {
     constructor() {
@@ -15,23 +14,31 @@ export class NetClient {
         this.joinHandlers = [];
         this.leaveHandlers = [];
         this.statusHandlers = [];
+        this.blocksDestroyedHandlers = [];
+        this.shipDestroyedHandlers = [];
+        this.shipRespawnedHandlers = [];
+        this.projectileSpawnHandlers = [];
+        this.projectileRemoveHandlers = [];
+        this.debrisSpawnHandlers = [];
+        this.debrisRemoveHandlers = [];
+        this.asteroidUpdateHandlers = [];
         this.localId = null;
     }
     get status() {
         return this._status;
     }
-    onSnapshot(fn) {
-        this.snapshotHandlers.push(fn);
-    }
-    onJoin(fn) {
-        this.joinHandlers.push(fn);
-    }
-    onLeave(fn) {
-        this.leaveHandlers.push(fn);
-    }
-    onStatusChange(fn) {
-        this.statusHandlers.push(fn);
-    }
+    onSnapshot(fn) { this.snapshotHandlers.push(fn); }
+    onJoin(fn) { this.joinHandlers.push(fn); }
+    onLeave(fn) { this.leaveHandlers.push(fn); }
+    onStatusChange(fn) { this.statusHandlers.push(fn); }
+    onBlocksDestroyed(fn) { this.blocksDestroyedHandlers.push(fn); }
+    onShipDestroyed(fn) { this.shipDestroyedHandlers.push(fn); }
+    onShipRespawned(fn) { this.shipRespawnedHandlers.push(fn); }
+    onProjectileSpawn(fn) { this.projectileSpawnHandlers.push(fn); }
+    onProjectileRemove(fn) { this.projectileRemoveHandlers.push(fn); }
+    onDebrisSpawn(fn) { this.debrisSpawnHandlers.push(fn); }
+    onDebrisRemove(fn) { this.debrisRemoveHandlers.push(fn); }
+    onAsteroidUpdate(fn) { this.asteroidUpdateHandlers.push(fn); }
     setStatus(s) {
         this._status = s;
         for (const fn of this.statusHandlers)
@@ -71,27 +78,64 @@ export class NetClient {
                 catch {
                     return;
                 }
-                if (msg.type === 'welcome') {
-                    this.localId = msg.id;
-                    if (!settled) {
-                        settled = true;
-                        window.clearTimeout(timeout);
-                        this.setStatus('online');
-                        resolve();
+                switch (msg.type) {
+                    case 'welcome': {
+                        this.localId = msg.id;
+                        if (!settled) {
+                            settled = true;
+                            window.clearTimeout(timeout);
+                            this.setStatus('online');
+                            this.startInputLoop();
+                            resolve({ id: msg.id, ownBlueprint: msg.ownBlueprint, players: msg.players, asteroids: msg.asteroids, debris: msg.debris });
+                        }
+                        break;
                     }
-                    this.startInputLoop();
-                }
-                else if (msg.type === 'snapshot') {
-                    for (const h of this.snapshotHandlers)
-                        h(msg.players);
-                }
-                else if (msg.type === 'join') {
-                    for (const h of this.joinHandlers)
-                        h(msg.player);
-                }
-                else if (msg.type === 'leave') {
-                    for (const h of this.leaveHandlers)
-                        h(msg.id);
+                    case 'snapshot':
+                        for (const h of this.snapshotHandlers)
+                            h(msg.players);
+                        break;
+                    case 'join':
+                        for (const h of this.joinHandlers)
+                            h(msg.player);
+                        break;
+                    case 'leave':
+                        for (const h of this.leaveHandlers)
+                            h(msg.id);
+                        break;
+                    case 'blocks_destroyed':
+                        for (const h of this.blocksDestroyedHandlers)
+                            h({ shipId: msg.shipId, blockIds: msg.blockIds, x: msg.x, y: msg.y });
+                        break;
+                    case 'ship_destroyed':
+                        for (const h of this.shipDestroyedHandlers)
+                            h({ shipId: msg.shipId, killerId: msg.killerId ?? null });
+                        break;
+                    case 'ship_respawned':
+                        for (const h of this.shipRespawnedHandlers)
+                            h({ shipId: msg.shipId, x: msg.x, y: msg.y, angle: msg.angle, blueprint: msg.blueprint });
+                        break;
+                    case 'projectile_spawn':
+                        for (const h of this.projectileSpawnHandlers)
+                            h(msg.projectile);
+                        break;
+                    case 'projectile_remove':
+                        for (const h of this.projectileRemoveHandlers)
+                            h(msg.id);
+                        break;
+                    case 'debris_spawn':
+                        for (const h of this.debrisSpawnHandlers)
+                            h(msg.debris);
+                        break;
+                    case 'debris_remove':
+                        for (const h of this.debrisRemoveHandlers)
+                            h(msg.id);
+                        break;
+                    case 'asteroid_update':
+                        for (const h of this.asteroidUpdateHandlers)
+                            h(msg.asteroids);
+                        break;
+                    default:
+                        break;
                 }
             });
             socket.addEventListener('close', () => {
@@ -115,7 +159,6 @@ export class NetClient {
             });
         });
     }
-    /** Queues the latest input; actually sent on a fixed-rate timer to keep bandwidth bounded. */
     sendInput(input) {
         this.lastInput = input;
     }

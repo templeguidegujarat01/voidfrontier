@@ -17,7 +17,7 @@ export class CombatSystem {
             const local = new Vector2(mount.gx * GRID_CELL_SIZE, mount.gy * GRID_CELL_SIZE);
             const worldOffset = Vector2.fromAngle(local.angle() + ship.angle, local.length());
             const spawnPos = ship.position.add(worldOffset);
-            this.projectiles.push(new Projectile(spawnPos, ship.angle, mount.projectileSpeed, mount.damage, ship.faction, mount.range));
+            this.projectiles.push(new Projectile(spawnPos, ship.angle, mount.projectileSpeed, mount.damage, ship.faction, mount.range, ship.id));
         }
     }
     update(dt, nowMs, allShips) {
@@ -28,17 +28,27 @@ export class CombatSystem {
             for (const ship of allShips) {
                 if (!ship.alive)
                     continue;
-                if (ship.faction === p.owner)
+                if (ship.id === p.ownerShipId)
+                    continue; // never hit yourself
+                // Same-faction exclusion ("no friendly fire") is only meaningful
+                // for bots, which share a faction because they're all "the AI
+                // side". Every human player is also faction 'player', so applying
+                // this to players would make humans unable to ever hit each
+                // other — self-exclusion above (by ship id) is what actually
+                // prevents self-damage; this additional rule only stops bot vs
+                // bot fire.
+                if (ship.faction === p.owner && ship.faction === 'bot')
                     continue;
-                const dist = Vector2.distance(p.position, ship.position);
+                const closestPoint = Vector2.closestPointOnSegment(ship.position, p.previousPosition, p.position);
+                const dist = Vector2.distance(ship.position, closestPoint);
                 if (dist <= ship.approxRadius()) {
-                    const destroyed = ship.applyBlockDamage(p.position, p.damage, nowMs);
+                    const destroyed = ship.applyBlockDamage(closestPoint, p.damage, nowMs);
                     p.alive = false;
                     if (destroyed.length > 0) {
-                        this.events.onBlocksDestroyed?.(ship, destroyed, p.position);
+                        this.events.onBlocksDestroyed?.(ship, destroyed, closestPoint);
                     }
                     if (!ship.alive) {
-                        const killer = allShips.find((s) => s.faction === p.owner) ?? null;
+                        const killer = allShips.find((s) => s.id === p.ownerShipId) ?? null;
                         this.events.onShipDestroyed?.(ship, killer);
                     }
                     break;

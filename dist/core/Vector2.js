@@ -36,6 +36,19 @@ export class Vector2 {
     static distance(a, b) {
         return a.sub(b).length();
     }
+    /** Closest point on segment [a, b] to `point` — the actual impact location for a swept collision, not just wherever the projectile ended up this tick. */
+    static closestPointOnSegment(point, a, b) {
+        const ab = b.sub(a);
+        const lengthSq = ab.lengthSq();
+        if (lengthSq < 1e-9)
+            return a;
+        const t = clamp(point.sub(a).x * ab.x + point.sub(a).y * ab.y, 0, lengthSq) / lengthSq;
+        return a.add(ab.scale(t));
+    }
+    /** Shortest distance from `point` to the line segment [a, b] — used for swept collision checks so fast-moving objects can't skip over a small target between two discrete ticks. */
+    static distanceToSegment(point, a, b) {
+        return Vector2.distance(point, Vector2.closestPointOnSegment(point, a, b));
+    }
     static lerp(a, b, t) {
         return new Vector2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
     }
