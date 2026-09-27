@@ -7,6 +7,8 @@ import {
   pruneDisconnected,
   hasCore,
   instantiateBlueprint,
+  removeBlocks,
+  approxRadiusOf,
   WeaponMount
 } from '../ship/ShipBlueprint.js';
 
@@ -102,13 +104,24 @@ export abstract class Ship {
 
   /** Approximate world-space collision radius, derived from how far the farthest block sits from the Core. Recomputed on demand since it changes as blocks are lost. */
   approxRadius(): number {
-    let maxDist = 1;
-    for (const b of this.blueprint) {
-      if (b.hp <= 0) continue;
-      const d = Math.hypot(b.gx, b.gy);
-      if (d > maxDist) maxDist = d;
+    return approxRadiusOf(this.blueprint);
+  }
+
+  /**
+   * Applies a destruction the SERVER already decided (a set of block
+   * instance ids, including any cascade-detached ones it already
+   * computed) — this never re-runs damage/armor math or re-derives
+   * connectivity itself; it just removes exactly what the server said
+   * to remove, so every client converges on the same result as a pure
+   * function of the same authoritative fact.
+   */
+  applyExternalBlockRemoval(instanceIds: string[]): void {
+    this.blueprint = removeBlocks(this.blueprint, instanceIds);
+    this.stats = computeAggregateStats(this.blueprint);
+    if (!hasCore(this.blueprint)) {
+      this.alive = false;
+      this.respawnTimer = 3;
     }
-    return maxDist * GRID_CELL_SIZE + GRID_CELL_SIZE * 0.6;
   }
 
   canFireMount(mount: WeaponMount): boolean {
@@ -208,6 +221,12 @@ export abstract class Ship {
       this.velocity = this.velocity.add(accel.scale(dt));
     }
 
+    // Frame-rate-independent drag: `Math.pow(drag, dt*60)` gives the
+    // same real per-second decay at any tick rate (verified: 60 ticks of
+    // dt=1/60 and 20 ticks of dt=1/20 both compound to the same total).
+    // NOT a bug — confirmed by direct calculation after multiplayer
+    // testing raised the question, so leaving this note for the next
+    // person who has the same suspicion.
     const drag = 0.9;
     this.velocity = this.velocity.scale(Math.pow(drag, dt * 60));
 

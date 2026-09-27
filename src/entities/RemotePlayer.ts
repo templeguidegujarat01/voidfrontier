@@ -1,12 +1,15 @@
 import { Vector2, angleDiff } from '../core/Vector2.js';
+import { ShipBlueprint } from '../ship/BlockTypes.js';
+import { approxRadiusOf, removeBlocks, cloneBlueprint } from '../ship/ShipBlueprint.js';
 
 /**
- * Visual-only representation of another connected player, driven by
- * periodic server snapshots. Implements just enough of the Ship surface
- * for Renderer.drawShip to render it (name, faction, position, angle,
- * alive, shield, recentlyHit) without pulling in local physics/combat —
- * this entity is never simulated client-side and never collides locally;
- * the server is the only authority on its true state.
+ * Another connected player, as seen by this client. Position/angle are
+ * driven by periodic server snapshots (smoothed, not simulated locally).
+ * The block structure is NOT guessed or locally simulated at all — it
+ * starts from the full blueprint the server sent on join, and changes
+ * only when the server broadcasts an actual block-destruction event
+ * (see NetClient.onBlocksDestroyed / Game.ts), so every client converges
+ * on the exact same ship shape the server has.
  */
 export class RemotePlayer {
   readonly id: string;
@@ -15,45 +18,58 @@ export class RemotePlayer {
 
   position: Vector2;
   angle = 0;
-  hull = 0;
-  maxHull = 1;
+  blueprint: ShipBlueprint;
+  shield = 0;
   alive = true;
-  shield = 0; // not currently synced; kept for Renderer interface compatibility
 
   private targetPosition: Vector2;
   private targetAngle = 0;
   private lastSnapshotMs = 0;
+  private lastHitMs = -Infinity;
 
-  constructor(id: string, name: string, position: Vector2, angle: number) {
+  constructor(id: string, name: string, position: Vector2, angle: number, blueprint: ShipBlueprint) {
     this.id = id;
     this.name = name;
     this.position = position.clone();
     this.targetPosition = position.clone();
     this.angle = angle;
     this.targetAngle = angle;
+    this.blueprint = cloneBlueprint(blueprint);
   }
 
-  applySnapshot(pos: Vector2, angle: number, hull: number, maxHull: number, alive: boolean, nowMs: number): void {
+  applySnapshot(pos: Vector2, angle: number, shield: number, alive: boolean, nowMs: number): void {
     this.targetPosition = pos;
     this.targetAngle = angle;
-    this.hull = hull;
-    this.maxHull = maxHull;
+    this.shield = shield;
     this.alive = alive;
     this.lastSnapshotMs = nowMs;
   }
 
-  /** Smooths toward the latest snapshot rather than snapping, so ~20Hz updates still look fluid. */
+  applyBlockRemoval(instanceIds: string[], nowMs: number): void {
+    this.blueprint = removeBlocks(this.blueprint, instanceIds);
+    this.lastHitMs = nowMs;
+  }
+
+  applyRespawn(pos: Vector2, angle: number, blueprint: ShipBlueprint): void {
+    this.position = pos.clone();
+    this.targetPosition = pos.clone();
+    this.angle = angle;
+    this.targetAngle = angle;
+    this.blueprint = cloneBlueprint(blueprint);
+    this.alive = true;
+  }
+
+  approxRadius(): number {
+    return approxRadiusOf(this.blueprint);
+  }
+
   update(dt: number): void {
     const t = Math.min(1, dt * 12);
     this.position = Vector2.lerp(this.position, this.targetPosition, t);
     this.angle += angleDiff(this.angle, this.targetAngle) * t;
   }
 
-  recentlyHit(_nowMs: number): boolean {
-    return false; // combat sync not implemented yet — see server/index.mjs notes
-  }
-
-  msSinceSnapshot(nowMs: number): number {
-    return nowMs - this.lastSnapshotMs;
+  recentlyHit(nowMs: number, windowMs = 250): boolean {
+    return nowMs - this.lastHitMs < windowMs;
   }
 }

@@ -9,17 +9,21 @@ import { PlayerShip } from '../entities/PlayerShip.js';
 import { BotShip } from '../entities/BotShip.js';
 import { Ship } from '../entities/Ship.js';
 import { RemotePlayer } from '../entities/RemotePlayer.js';
+import { Projectile } from '../entities/Projectile.js';
 import { CombatSystem } from '../combat/CombatSystem.js';
 import { tryMine } from '../world/MiningSystem.js';
 import { Debris } from '../world/Debris.js';
+import { SyncedAsteroid } from '../world/SyncedAsteroid.js';
 import { updateDebrisField } from '../world/DebrisSystem.js';
+import { cloneBlueprint, computeAggregateStats } from '../ship/ShipBlueprint.js';
 import { blockColor, getBlockDef } from '../ship/BlockCatalog.js';
 import { findTemplate, TIER1_TEMPLATES, TIER2_TEMPLATES, BlueprintTemplate } from '../ship/StarterBlueprints.js';
-import { NetClient, NetStatus } from '../net/NetClient.js';
+import { NetClient, NetStatus, WelcomePayload } from '../net/NetClient.js';
 import { MatchConfig, MatchResult } from '../app/MatchConfig.js';
 
 const BOT_NAMES = ['Rook-9', 'Ashen Veil', 'Marrow', 'Sable Fang', 'Cinderline', 'Glasswing', 'Ferro', 'Hollow Star'];
 const EVOLUTION_SCORE_THRESHOLD = 120;
+const SERVER_RECONCILE_STRENGTH = 0.15;
 
 export interface GameCallbacks {
   onMatchEnd?: (result: MatchResult) => void;
@@ -40,10 +44,15 @@ export class Game {
   readonly player: PlayerShip;
   private readonly bots: BotShip[] = [];
   private readonly debris: Debris[] = [];
+  private readonly remoteDebris = new Map<number, Debris>();
+  private readonly networkProjectiles = new Map<number, Projectile>();
+
   private nowMs = 0;
   private matchStartMs = 0;
   private matchEnded = false;
   private evolutionOffered = false;
+  private networked = false;
+  private serverPlayerTarget: { pos: Vector2; angle: number } | null = null;
 
   private net: NetClient | null = null;
   private readonly remotePlayers = new Map<string, RemotePlayer>();
@@ -100,37 +109,118 @@ export class Game {
   private setupNetworking(wsUrl: string): void {
     const net = new NetClient();
     this.net = net;
+
     net.onStatusChange((status: NetStatus) => {
       const label =
         status === 'connecting' ? 'Connecting…' :
-        status === 'online' ? `Online (${this.remotePlayers.size + 1} players)` :
+        status === 'online' ? `Online (${this.remotePlayers.size + 1} players — authoritative combat/mining)` :
         status === 'offline' ? 'Offline — showing local bots only' :
         'Connection error — showing local bots only';
       this.hud.setNetStatus(label);
     });
+
     net.onSnapshot((players) => {
       for (const p of players) {
-        if (p.id === net.localId) continue;
-        let rp = this.remotePlayers.get(p.id);
-        if (!rp) {
-          rp = new RemotePlayer(p.id, p.name, new Vector2(p.x, p.y), p.angle);
-          this.remotePlayers.set(p.id, rp);
+        if (p.id === net.localId) {
+          this.player.score = p.score;
+          this.player.kills = p.kills;
+          this.player.cargo = p.cargo;
+          this.serverPlayerTarget = { pos: new Vector2(p.x, p.y), angle: p.angle };
+          continue;
         }
-        rp.applySnapshot(new Vector2(p.x, p.y), p.angle, p.hull, p.maxHull, p.alive, this.nowMs);
+        const rp = this.remotePlayers.get(p.id);
+        if (rp) rp.applySnapshot(new Vector2(p.x, p.y), p.angle, p.shield, p.alive, this.nowMs);
       }
-      if (net.status === 'online') this.hud.setNetStatus(`Online (${this.remotePlayers.size + 1} players)`);
+      if (net.status === 'online') {
+        this.hud.setNetStatus(`Online (${this.remotePlayers.size + 1} players — authoritative combat/mining)`);
+      }
     });
+
     net.onJoin((p) => {
       if (p.id === net.localId) return;
-      this.remotePlayers.set(p.id, new RemotePlayer(p.id, p.name, new Vector2(p.x, p.y), p.angle));
+      this.remotePlayers.set(p.id, new RemotePlayer(p.id, p.name, new Vector2(p.x, p.y), p.angle, p.blueprint));
     });
+
     net.onLeave((id) => {
       this.remotePlayers.delete(id);
-      if (net.status === 'online') this.hud.setNetStatus(`Online (${this.remotePlayers.size + 1} players)`);
     });
-    net.connect(wsUrl, this.config.playerName || 'Pilot').catch(() => {
+
+    net.onBlocksDestroyed(({ shipId, blockIds }) => {
+      if (shipId === net.localId) {
+        this.player.applyExternalBlockRemoval(blockIds);
+      } else {
+        this.remotePlayers.get(shipId)?.applyBlockRemoval(blockIds, this.nowMs);
+      }
+    });
+
+    net.onShipDestroyed(({ shipId }) => {
+      if (shipId === net.localId) {
+        this.player.deaths += 1;
+      }
+    });
+
+    net.onShipRespawned(({ shipId, x, y, angle, blueprint }) => {
+      if (shipId === net.localId) {
+        this.player.respawn(new Vector2(x, y));
+      } else {
+        this.remotePlayers.get(shipId)?.applyRespawn(new Vector2(x, y), angle, blueprint);
+      }
+    });
+
+    net.onProjectileSpawn((p) => {
+      const proj = new Projectile(new Vector2(p.x, p.y), p.angle, p.speed, p.damage, p.owner as 'player' | 'bot', p.range);
+      (proj as unknown as { id: number }).id = p.id;
+      this.networkProjectiles.set(p.id, proj);
+    });
+    net.onProjectileRemove((id) => this.networkProjectiles.delete(id));
+
+    net.onDebrisSpawn((d) => {
+      const deb = new Debris(new Vector2(d.x, d.y), d.value, d.color);
+      (deb as unknown as { id: number }).id = d.id;
+      deb.velocity = new Vector2(0, 0);
+      this.remoteDebris.set(d.id, deb);
+    });
+    net.onDebrisRemove((id) => this.remoteDebris.delete(id));
+
+    net.onAsteroidUpdate((updates) => {
+      for (const u of updates) {
+        const a = this.world.asteroids.find((x) => x.id === u.id) as unknown as SyncedAsteroid | undefined;
+        if (a) a.resource = u.resource;
+      }
+    });
+
+    net.connect(wsUrl, this.config.playerName || 'Pilot').then((welcome) => this.onNetworkReady(welcome)).catch(() => {
       /* status already reflects offline/error; local bots remain fully playable */
     });
+  }
+
+  private onNetworkReady(welcome: WelcomePayload): void {
+    this.networked = true;
+
+    // Adopt the SERVER's own instance ids for our ship's blocks — the
+    // client generated its own ids at construction time (before
+    // connecting), which are meaningless to the server. Every future
+    // 'blocks_destroyed' event for our own ship references the server's
+    // ids, so without this our own damage would silently never apply.
+    this.player.blueprint = cloneBlueprint(welcome.ownBlueprint);
+    this.player.stats = computeAggregateStats(this.player.blueprint);
+
+    const synced = welcome.asteroids.map(
+      (a) => new SyncedAsteroid(a.id, new Vector2(a.x, a.y), a.radius, a.maxResource, a.resource, a.shapeSeed)
+    );
+    this.world.asteroids.length = 0;
+    (this.world.asteroids as unknown[]).push(...synced);
+
+    for (const p of welcome.players) {
+      this.remotePlayers.set(p.id, new RemotePlayer(p.id, p.name, new Vector2(p.x, p.y), p.angle, p.blueprint));
+    }
+
+    for (const d of welcome.debris) {
+      const deb = new Debris(new Vector2(d.x, d.y), d.value, d.color);
+      (deb as unknown as { id: number }).id = d.id;
+      deb.velocity = new Vector2(0, 0);
+      this.remoteDebris.set(d.id, deb);
+    }
   }
 
   private handleResize = (): void => {
@@ -202,10 +292,17 @@ export class Game {
     this.player.update(dt);
     this.player.position = this.world.clampToBounds(this.player.position);
 
-    const collected = tryMine(this.player, this.world.asteroids, dt);
-    if (collected > 0) {
-      this.player.resourcesCollected += collected;
-      this.player.score += collected;
+    if (this.networked && this.serverPlayerTarget) {
+      this.player.position = Vector2.lerp(this.player.position, this.serverPlayerTarget.pos, SERVER_RECONCILE_STRENGTH);
+      this.player.angle += (this.serverPlayerTarget.angle - this.player.angle) * SERVER_RECONCILE_STRENGTH;
+    }
+
+    if (!this.networked) {
+      const collected = tryMine(this.player, this.world.asteroids, dt);
+      if (collected > 0) {
+        this.player.resourcesCollected += collected;
+        this.player.score += collected;
+      }
     }
 
     for (const bot of this.bots) {
@@ -223,6 +320,10 @@ export class Game {
     }
 
     for (const rp of this.remotePlayers.values()) rp.update(dt);
+    for (const [id, proj] of this.networkProjectiles) {
+      proj.update(dt);
+      if (!proj.alive) this.networkProjectiles.delete(id);
+    }
 
     const allShips: Ship[] = [this.player, ...this.bots];
     this.combat.tryFire(this.player, this.nowMs);
@@ -238,7 +339,7 @@ export class Game {
       if (this.debris[i].expired) this.debris.splice(i, 1);
     }
 
-    if (!this.player.alive && this.player.respawnTimer <= 0) {
+    if (!this.networked && !this.player.alive && this.player.respawnTimer <= 0) {
       this.player.respawn(new Vector2(0, 0));
     }
 
@@ -285,8 +386,8 @@ export class Game {
     this.renderer.drawStarfield(this.camera, this.world.stars);
     this.renderer.drawWorldBounds(this.camera, this.world);
     this.renderer.drawAsteroids(this.camera, this.world.asteroids);
-    this.renderer.drawDebris(this.camera, this.debris);
-    this.renderer.drawProjectiles(this.camera, this.combat.projectiles);
+    this.renderer.drawDebris(this.camera, [...this.debris, ...this.remoteDebris.values()]);
+    this.renderer.drawProjectiles(this.camera, [...this.combat.projectiles, ...this.networkProjectiles.values()]);
 
     for (const bot of this.bots) this.renderer.drawShip(this.camera, bot, this.nowMs);
     for (const rp of this.remotePlayers.values()) this.renderer.drawShip(this.camera, rp, this.nowMs);

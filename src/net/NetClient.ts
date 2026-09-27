@@ -1,14 +1,64 @@
+import { PlacedBlock } from '../ship/BlockTypes.js';
+
 export type NetStatus = 'idle' | 'connecting' | 'online' | 'offline' | 'error';
 
-export interface PlayerSnapshot {
+export interface PlayerSnapshotEntry {
+  id: string;
+  x: number;
+  y: number;
+  angle: number;
+  shield: number;
+  alive: boolean;
+  score: number;
+  kills: number;
+  cargo: number;
+}
+
+export interface PlayerJoinInfo {
   id: string;
   name: string;
   x: number;
   y: number;
   angle: number;
-  hull: number;
-  maxHull: number;
+  blueprint: PlacedBlock[];
   alive: boolean;
+}
+
+export interface AsteroidInfo {
+  id: number;
+  x: number;
+  y: number;
+  radius: number;
+  maxResource: number;
+  resource: number;
+  shapeSeed: number;
+}
+
+export interface DebrisInfo {
+  id: number;
+  x: number;
+  y: number;
+  value: number;
+  color: string;
+}
+
+export interface WelcomePayload {
+  id: string;
+  ownBlueprint: PlacedBlock[];
+  players: PlayerJoinInfo[];
+  asteroids: AsteroidInfo[];
+  debris: DebrisInfo[];
+}
+
+export interface ProjectileSpawnInfo {
+  id: number;
+  x: number;
+  y: number;
+  angle: number;
+  speed: number;
+  damage: number;
+  owner: string;
+  range: number;
 }
 
 export interface NetInput {
@@ -18,17 +68,13 @@ export interface NetInput {
   mining: boolean;
 }
 
-type SnapshotHandler = (players: PlayerSnapshot[]) => void;
-type JoinHandler = (player: PlayerSnapshot) => void;
-type LeaveHandler = (id: string) => void;
-type StatusHandler = (status: NetStatus) => void;
+type Handler<T> = (payload: T) => void;
 
 /**
- * Thin wrapper around the browser's native WebSocket. Talks to
- * server/index.mjs (run separately — see README). This is a real network
- * client, not a mock: if no server is reachable, status goes to
- * 'offline'/'error' and callers must handle that rather than pretending
- * a connection exists.
+ * Browser-side WebSocket client for the authoritative multiplayer
+ * server (server/index.mjs). Every event here reflects something the
+ * SERVER decided — this client never infers or guesses combat/mining
+ * outcomes from partial data.
  */
 export class NetClient {
   private socket: WebSocket | null = null;
@@ -36,10 +82,18 @@ export class NetClient {
   private inputTimer: number | null = null;
   private lastInput: NetInput = { thrustIntent: 0, targetAngle: 0, firing: false, mining: false };
 
-  private snapshotHandlers: SnapshotHandler[] = [];
-  private joinHandlers: JoinHandler[] = [];
-  private leaveHandlers: LeaveHandler[] = [];
-  private statusHandlers: StatusHandler[] = [];
+  private snapshotHandlers: Handler<PlayerSnapshotEntry[]>[] = [];
+  private joinHandlers: Handler<PlayerJoinInfo>[] = [];
+  private leaveHandlers: Handler<string>[] = [];
+  private statusHandlers: Handler<NetStatus>[] = [];
+  private blocksDestroyedHandlers: Handler<{ shipId: string; blockIds: string[]; x: number; y: number }>[] = [];
+  private shipDestroyedHandlers: Handler<{ shipId: string; killerId: string | null }>[] = [];
+  private shipRespawnedHandlers: Handler<{ shipId: string; x: number; y: number; angle: number; blueprint: PlacedBlock[] }>[] = [];
+  private projectileSpawnHandlers: Handler<ProjectileSpawnInfo>[] = [];
+  private projectileRemoveHandlers: Handler<number>[] = [];
+  private debrisSpawnHandlers: Handler<DebrisInfo>[] = [];
+  private debrisRemoveHandlers: Handler<number>[] = [];
+  private asteroidUpdateHandlers: Handler<{ id: number; resource: number }[]>[] = [];
 
   localId: string | null = null;
 
@@ -47,25 +101,25 @@ export class NetClient {
     return this._status;
   }
 
-  onSnapshot(fn: SnapshotHandler): void {
-    this.snapshotHandlers.push(fn);
-  }
-  onJoin(fn: JoinHandler): void {
-    this.joinHandlers.push(fn);
-  }
-  onLeave(fn: LeaveHandler): void {
-    this.leaveHandlers.push(fn);
-  }
-  onStatusChange(fn: StatusHandler): void {
-    this.statusHandlers.push(fn);
-  }
+  onSnapshot(fn: Handler<PlayerSnapshotEntry[]>): void { this.snapshotHandlers.push(fn); }
+  onJoin(fn: Handler<PlayerJoinInfo>): void { this.joinHandlers.push(fn); }
+  onLeave(fn: Handler<string>): void { this.leaveHandlers.push(fn); }
+  onStatusChange(fn: Handler<NetStatus>): void { this.statusHandlers.push(fn); }
+  onBlocksDestroyed(fn: Handler<{ shipId: string; blockIds: string[]; x: number; y: number }>): void { this.blocksDestroyedHandlers.push(fn); }
+  onShipDestroyed(fn: Handler<{ shipId: string; killerId: string | null }>): void { this.shipDestroyedHandlers.push(fn); }
+  onShipRespawned(fn: Handler<{ shipId: string; x: number; y: number; angle: number; blueprint: PlacedBlock[] }>): void { this.shipRespawnedHandlers.push(fn); }
+  onProjectileSpawn(fn: Handler<ProjectileSpawnInfo>): void { this.projectileSpawnHandlers.push(fn); }
+  onProjectileRemove(fn: Handler<number>): void { this.projectileRemoveHandlers.push(fn); }
+  onDebrisSpawn(fn: Handler<DebrisInfo>): void { this.debrisSpawnHandlers.push(fn); }
+  onDebrisRemove(fn: Handler<number>): void { this.debrisRemoveHandlers.push(fn); }
+  onAsteroidUpdate(fn: Handler<{ id: number; resource: number }[]>): void { this.asteroidUpdateHandlers.push(fn); }
 
   private setStatus(s: NetStatus): void {
     this._status = s;
     for (const fn of this.statusHandlers) fn(s);
   }
 
-  connect(url: string, name: string, timeoutMs = 4000): Promise<void> {
+  connect(url: string, name: string, timeoutMs = 4000): Promise<WelcomePayload> {
     this.disconnect();
     this.setStatus('connecting');
 
@@ -100,21 +154,53 @@ export class NetClient {
         } catch {
           return;
         }
-        if (msg.type === 'welcome') {
-          this.localId = msg.id;
-          if (!settled) {
-            settled = true;
-            window.clearTimeout(timeout);
-            this.setStatus('online');
-            resolve();
+        switch (msg.type) {
+          case 'welcome': {
+            this.localId = msg.id;
+            if (!settled) {
+              settled = true;
+              window.clearTimeout(timeout);
+              this.setStatus('online');
+              this.startInputLoop();
+              resolve({ id: msg.id, ownBlueprint: msg.ownBlueprint, players: msg.players, asteroids: msg.asteroids, debris: msg.debris });
+            }
+            break;
           }
-          this.startInputLoop();
-        } else if (msg.type === 'snapshot') {
-          for (const h of this.snapshotHandlers) h(msg.players as PlayerSnapshot[]);
-        } else if (msg.type === 'join') {
-          for (const h of this.joinHandlers) h(msg.player as PlayerSnapshot);
-        } else if (msg.type === 'leave') {
-          for (const h of this.leaveHandlers) h(msg.id as string);
+          case 'snapshot':
+            for (const h of this.snapshotHandlers) h(msg.players as PlayerSnapshotEntry[]);
+            break;
+          case 'join':
+            for (const h of this.joinHandlers) h(msg.player as PlayerJoinInfo);
+            break;
+          case 'leave':
+            for (const h of this.leaveHandlers) h(msg.id as string);
+            break;
+          case 'blocks_destroyed':
+            for (const h of this.blocksDestroyedHandlers) h({ shipId: msg.shipId, blockIds: msg.blockIds, x: msg.x, y: msg.y });
+            break;
+          case 'ship_destroyed':
+            for (const h of this.shipDestroyedHandlers) h({ shipId: msg.shipId, killerId: msg.killerId ?? null });
+            break;
+          case 'ship_respawned':
+            for (const h of this.shipRespawnedHandlers) h({ shipId: msg.shipId, x: msg.x, y: msg.y, angle: msg.angle, blueprint: msg.blueprint });
+            break;
+          case 'projectile_spawn':
+            for (const h of this.projectileSpawnHandlers) h(msg.projectile as ProjectileSpawnInfo);
+            break;
+          case 'projectile_remove':
+            for (const h of this.projectileRemoveHandlers) h(msg.id as number);
+            break;
+          case 'debris_spawn':
+            for (const h of this.debrisSpawnHandlers) h(msg.debris as DebrisInfo);
+            break;
+          case 'debris_remove':
+            for (const h of this.debrisRemoveHandlers) h(msg.id as number);
+            break;
+          case 'asteroid_update':
+            for (const h of this.asteroidUpdateHandlers) h(msg.asteroids);
+            break;
+          default:
+            break;
         }
       });
 
@@ -141,7 +227,6 @@ export class NetClient {
     });
   }
 
-  /** Queues the latest input; actually sent on a fixed-rate timer to keep bandwidth bounded. */
   sendInput(input: NetInput): void {
     this.lastInput = input;
   }

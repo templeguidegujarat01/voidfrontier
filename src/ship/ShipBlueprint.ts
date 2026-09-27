@@ -203,3 +203,25 @@ export function instantiateBlueprint(template: { blockId: string; gx: number; gy
 export function cloneBlueprint(blueprint: ShipBlueprint): ShipBlueprint {
   return blueprint.map((b) => ({ ...b }));
 }
+
+/** Approximate world-space collision/render radius from how far the farthest live block sits from the Core. Shared by Ship and RemotePlayer so both use one formula. */
+export function approxRadiusOf(blueprint: ShipBlueprint): number {
+  let maxDist = 1;
+  for (const b of blueprint) {
+    if (b.hp <= 0) continue;
+    const d = Math.hypot(b.gx, b.gy);
+    if (d > maxDist) maxDist = d;
+  }
+  return maxDist * GRID_CELL_SIZE + GRID_CELL_SIZE * 0.6;
+}
+
+/**
+ * Pure removal of specific block instances from a blueprint, with no
+ * damage decision of its own — used to apply an ALREADY-DECIDED
+ * destruction (e.g. one the server just told us happened) identically
+ * on every client, rather than each client re-deciding anything.
+ */
+export function removeBlocks(blueprint: ShipBlueprint, instanceIds: string[]): ShipBlueprint {
+  const remove = new Set(instanceIds);
+  return blueprint.filter((b) => !remove.has(b.instanceId));
+}
